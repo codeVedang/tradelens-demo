@@ -1,0 +1,31 @@
+# Single-service, mock-only demonstration. No paid plan, disk or AI key provisioned.
+services:
+  - type: web
+    name: tradelens-demo
+    runtime: node
+    plan: free
+    numInstances: 1
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DEPLOYMENT_MODE
+        value: hosted_demo
+      - key: DEV_NO_AUTH
+        value: "false"
+      - key: APP_ACCESS_TOKEN
+        generateValue: true
+      - key: AI_PROVIDER
+        value: mock
+      - key: DEMO_EPHEMERAL_STORAGE
+        value: "true"
+      - key: DATABASE_PATH
+        value: /tmp/tradelens-demo/coach.sqlite
+      - key: AI_REQUEST_BUDGET
+        value: "20"
+      - key: AI_TIMEOUT_MS
+        value: "10000"
