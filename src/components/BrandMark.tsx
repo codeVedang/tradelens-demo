@@ -1,0 +1,11 @@
+/** Scalable mark based on the supplied Tradzyn brand reference. */
+export default function BrandMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 480 400" fill="#EF2B2D" aria-hidden="true" focusable="false">
+      <path d="M8 132 70 58Q80 48 99 48H378L303 132Z" />
+      <path d="m205 132-67 61q-8 7-10 20l-25 151 53 36 29-205 66-63Z" />
+      <path d="m207 239 50-43-9 137-58 44Z" />
+      <path d="m376 43-35-15 110-20-32 100-15-33-108 112-4 106-53 40 9-145q1-16 15-21l16-5Z" />
+    </svg>
+  );
+}

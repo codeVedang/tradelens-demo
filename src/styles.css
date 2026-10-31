@@ -27,7 +27,7 @@
 .processing summary,
 .history summary {
   cursor: pointer;
-  color: #bad9c3;
+  color: #efb4b5;
 }
 .processing p,
 .history p {
@@ -42,6 +42,8 @@
   margin-top: 14px;
 }
 :root {
+  --brand: #EF2B2D;
+  --brand-light: #ff8b8d;
   font-family:
     Inter,
     ui-sans-serif,
@@ -98,7 +100,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid #b4e8bc;
+  outline: 2px solid var(--brand-light);
   outline-offset: 3px;
 }
 a {
@@ -148,16 +150,16 @@ aside {
   padding: 0 10px;
 }
 .brand-icon {
-  background: #b9e9bd;
-  color: #1b3023;
-  width: 33px;
-  height: 34px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
 }
+.brand-name { color: #ffffff; }
+.brand-name > span { color: var(--brand); }
+.brand-mini > svg { width: 22px; height: 22px; flex-shrink: 0; }
+
 .brand-dot {
-  color: #b9e9bd;
+  color: var(--brand);
   font-size: 11px;
   margin-left: -5px;
   align-self: start;
@@ -219,8 +221,8 @@ nav {
   padding: 13px 14px;
 }
 .nav.active {
-  background: #24322c;
-  color: #b9e9bd;
+  background: #382126;
+  color: var(--brand-light);
 }
 .nav-dot {
   width: 6px;
@@ -235,7 +237,7 @@ nav {
 }
 .local-card {
   border: 1px solid #303943;
-  background: linear-gradient(125deg, #1d2825, #191f27);
+  background: linear-gradient(125deg, #2c1b22, #191f27);
   padding: 16px;
   border-radius: 9px;
 }
@@ -251,7 +253,7 @@ nav {
   border-radius: 0;
   padding: 12px 0 0;
   margin-top: 13px;
-  color: #b9e9bd;
+  color: var(--brand-light);
   width: 100%;
   font-size: 11px;
   justify-content: space-between;
@@ -319,7 +321,7 @@ header {
   text-transform: uppercase;
 }
 .accent {
-  color: #9bb7a4;
+  color: #e7a0a2;
   margin-bottom: 11px;
 }
 h1 {
@@ -344,10 +346,10 @@ h1 {
   border-radius: 7px;
 }
 .hero {
-  border: 1px solid #35443d;
+  border: 1px solid #573138;
   background:
-    radial-gradient(ellipse at 86% 10%, #31443a77, transparent 57%),
-    linear-gradient(115deg, #1b2726, #19211f 55%, #1a2725);
+    radial-gradient(ellipse at 86% 10%, #EF2B2D22, transparent 57%),
+    linear-gradient(115deg, #291b23, #201920 55%, #291c24);
   border-radius: 13px;
   min-height: 285px;
   display: flex;
@@ -375,7 +377,7 @@ h1 {
   white-space: nowrap;
 }
 .hero .badge {
-  color: #c6ddce;
+  color: #f0c8c9;
   font-size: 9px;
 }
 .dot {
@@ -402,7 +404,7 @@ h1 {
   max-width: 420px;
   margin-top: 12px;
   line-height: 1.8;
-  color: #a4b4af;
+  color: #c2aeb1;
 }
 .hero-buttons {
   display: flex;
@@ -412,21 +414,21 @@ h1 {
 }
 .hero-buttons > span {
   font-size: 10px;
-  color: #97a99e;
+  color: #bda1a5;
   display: flex;
   gap: 6px;
   align-items: center;
 }
 .primary {
-  background: #b9e9bd;
-  color: #18291d;
-  border: 1px solid #b9e9bd;
+  background: var(--brand);
+  color: #ffffff;
+  border: 1px solid var(--brand);
   font-size: 12px;
   font-weight: 650;
   padding: 11px 15px;
 }
 .primary:hover {
-  background: #d0f5d3;
+  background: #ff5557;
 }
 .process-art {
   width: 36%;
@@ -438,13 +440,13 @@ h1 {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(#93c2a108 1px, transparent 1px),
-    linear-gradient(90deg, #93c2a108 1px, transparent 1px);
+    linear-gradient(#EF2B2D0d 1px, transparent 1px),
+    linear-gradient(90deg, #EF2B2D0d 1px, transparent 1px);
   background-size: 35px 35px;
   transform: rotate(-15deg) scale(1.4);
 }
 .orbit {
-  border: 1px solid #91b29d25;
+  border: 1px solid #EF2B2D33;
   border-radius: 100%;
   position: absolute;
   left: 50%;
@@ -468,24 +470,24 @@ h1 {
   place-items: center;
   width: 99px;
   height: 99px;
-  border: 1px solid #809f8977;
+  border: 1px solid #EF2B2D77;
   border-radius: 25px;
-  background: linear-gradient(140deg, #506d55, #263c2c);
-  box-shadow: 0 10px 70px #a1d9a529;
-  color: #d7f5d9;
+  background: linear-gradient(140deg, #9c252d, #491f2a);
+  box-shadow: 0 10px 70px #EF2B2D29;
+  color: #ffe3e4;
 }
 .art-chip {
   position: absolute;
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid #4c6152;
-  background: #26382eeb;
+  border: 1px solid #7a3a43;
+  background: #3c2029eb;
   box-shadow: 0 6px 20px #1118;
   border-radius: 6px;
   font-size: 10px;
   padding: 10px;
-  color: #c6dcca;
+  color: #f0c8cb;
   z-index: 1;
 }
 .chip-one {
@@ -508,7 +510,7 @@ h1 {
 }
 .art-line path {
   fill: none;
-  stroke: #a6dbb4;
+  stroke: var(--brand);
   stroke-width: 1.5;
 }
 .stats {
@@ -592,8 +594,8 @@ h1 {
   width: 49px;
   height: 49px;
   border: 1px solid #34413f;
-  background: #25302e;
-  color: #a0bcab;
+  background: #302127;
+  color: #e5a4a7;
   border-radius: 13px;
   margin-bottom: 15px;
 }
@@ -622,7 +624,7 @@ h1 {
 }
 .quote {
   font-size: 48px;
-  color: #b9e9bd;
+  color: var(--brand-light);
   font-family: Georgia, serif;
   line-height: 1;
 }
@@ -641,12 +643,12 @@ h1 {
   padding: 0;
   background: none;
   border: 0;
-  color: #b6d7bd;
+  color: #f2a0a2;
   font-size: 11px;
 }
 .text-button:hover {
   background: none;
-  color: #ddf7e1;
+  color: #ffd9da;
 }
 .chart {
   padding: 25px 17px 0;
@@ -750,7 +752,7 @@ footer {
     #10161c 25px,
     #151d25 26px
   );
-  color: #94b29f;
+  color: #dda3a8;
   text-align: center;
   gap: 14px;
   padding: 15px;
@@ -780,7 +782,7 @@ footer {
   height: 15px;
   flex-shrink: 0;
   margin-top: 3px;
-  accent-color: #b9e9bd;
+  accent-color: var(--brand);
 }
 label {
   display: block;
@@ -844,7 +846,7 @@ textarea {
   gap: 8px;
   align-items: center;
   margin-bottom: 10px;
-  color: #9cbaa9;
+  color: #e4a7ab;
 }
 .event-top time {
   margin-left: auto;
@@ -907,8 +909,8 @@ textarea {
 }
 .notice {
   padding: 15px 20px;
-  border-left: 2px solid #9ab69d;
-  background: #24312955;
+  border-left: 2px solid var(--brand);
+  background: #EF2B2D0d;
   margin: 20px !important;
   font-size: 11px;
 }
@@ -924,7 +926,7 @@ textarea {
 }
 .download {
   font-size: 12px;
-  color: #b9e9bd;
+  color: var(--brand-light);
   margin-left: 20px;
 }
 .rule-form {
@@ -932,7 +934,7 @@ textarea {
   margin: 20px;
   border: 1px solid #3b4b43;
   border-radius: 8px;
-  background: #192720;
+  background: #261b22;
 }
 .rule-row {
   display: flex;
@@ -957,9 +959,9 @@ textarea {
   color: #9aa5b2;
 }
 .toggle.enabled {
-  background: #293e30;
-  color: #b9e9bd;
-  border-color: #405947;
+  background: #48252c;
+  color: var(--brand-light);
+  border-color: #89414a;
 }
 .settings {
   padding: 25px;
@@ -982,13 +984,13 @@ textarea {
   border: 1px solid #34413e;
   border-radius: 8px;
   background: #101820;
-  color: #b9e9bd;
+  color: var(--brand-light);
   padding: 17px;
   font-size: 11px;
   line-height: 2;
 }
 .settings code {
-  color: #c3e1cb;
+  color: #f0b6ba;
 }
 @media (min-width: 1600px) {
   .content {

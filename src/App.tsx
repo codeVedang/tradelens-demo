@@ -1,3 +1,4 @@
+import BrandMark from "./components/BrandMark";
 import Empty from "./components/Empty";
 import SessionList from "./components/SessionList";
 import { useEffect, useRef, useState } from "react";
@@ -511,11 +512,9 @@ export default function App() {
   return (
     <div className="app">
       <aside>
-        <a className="brand" href="#" onClick={() => setPage("Overview")}>
-          <span className="brand-icon">
-            <Activity size={24} />
-          </span>
-          TradeLens<span className="brand-dot">●</span>
+        <a className="brand" href="#" aria-label="Tradzyn overview" onClick={() => setPage("Overview")}>
+          <BrandMark className="brand-icon" />
+          <span className="brand-name">Trad<span>zyn</span></span>
         </a>
         <div className="workspace">
           <span className="avatar">P</span>
@@ -985,12 +984,12 @@ export default function App() {
                             >
                               <stop
                                 offset="0%"
-                                stopColor="#a9e9b8"
+                                stopColor="#EF2B2D"
                                 stopOpacity={0.25}
                               />
                               <stop
                                 offset="100%"
-                                stopColor="#a9e9b8"
+                                stopColor="#EF2B2D"
                                 stopOpacity={0}
                               />
                             </linearGradient>
@@ -1017,7 +1016,7 @@ export default function App() {
                           <Area
                             type="monotone"
                             dataKey="frames"
-                            stroke="#a9e9b8"
+                            stroke="#EF2B2D"
                             fill="url(#fill)"
                             strokeWidth={2}
                           />
@@ -1733,8 +1732,8 @@ export default function App() {
           )}
           <footer>
             <span className="brand-mini">
-              <Activity size={15} />
-              TradeLens
+              <BrandMark />
+              Tradzyn
             </span>
             <span>A little more awareness. A better trading process.</span>
             <span>

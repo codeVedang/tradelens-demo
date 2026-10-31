@@ -48,6 +48,8 @@
     "docs/TESTING.md",
     "docs/DEPLOYMENT.md",
     "docs/IMPLEMENTATION_REPORT.md",
-    "PROJECT_STATUS.md"
+    "PROJECT_STATUS.md",
+    "src/components/BrandMark.tsx",
+    "src/assets/tradzyn-icon.svg"
   ]
 }

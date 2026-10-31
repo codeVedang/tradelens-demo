@@ -42,7 +42,7 @@ function copy(relative) {
     return;
   }
   if (
-    !/\.(tsx?|mjs|json|jpg|css|html|md|yaml)$/.test(relative) &&
+    !/\.(tsx?|mjs|json|jpg|svg|css|html|md|yaml)$/.test(relative) &&
     !files.includes(relative)
   )
     throw new Error("Unexpected source file type");
