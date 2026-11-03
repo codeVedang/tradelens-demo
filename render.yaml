@@ -15,10 +15,10 @@ services:
         value: production
       - key: DEPLOYMENT_MODE
         value: hosted_demo
-      - key: DEV_NO_AUTH
-        value: "false"
-      - key: APP_ACCESS_TOKEN
-        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
       - key: AI_PROVIDER
         value: mock
       - key: DEMO_EPHEMERAL_STORAGE

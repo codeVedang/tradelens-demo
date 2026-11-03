@@ -11,9 +11,9 @@ if (!process.argv.includes("--allow-paid")) {
   );
   process.exit(0);
 }
-if (process.env.AI_PROVIDER !== "openai") {
+if (process.env.AI_PROVIDER !== "openai" || !process.env.OPENAI_API_KEY) {
   console.error(
-    "Set AI_PROVIDER=openai in backend .env first. No API request made.",
+    "Set AI_PROVIDER=openai and OPENAI_API_KEY in backend .env first. No API request made.",
   );
   process.exit(1);
 }

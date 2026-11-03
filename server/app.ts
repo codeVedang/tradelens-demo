@@ -1,7 +1,10 @@
+import { accounts } from "./accounts.js";
+import { billing, type PaymentProvider } from "./billing.js";
+import { journal } from "./journal.js";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Store } from "./db.js";
 import { type AIProvider } from "./providers.js";
@@ -15,12 +18,13 @@ const stopSchema = z.object({
   capturedCount: z.number().int().min(0).max(1000000).optional(),
 });
 export type AppOptions = {
+  accountEnv?: NodeJS.ProcessEnv;
+  paymentProvider?: PaymentProvider;
   origin?: string;
   timeoutMs?: number;
   budget?: number;
   owner?: (req: express.Request) => string;
   minIntervalMs?: number;
-  accessToken?: string;
   requestLimit?: number;
   defaultIntervalSeconds?: number;
   defaultCaptureIntervalSeconds?: number;
@@ -34,8 +38,10 @@ export function createApp(
   provider: AIProvider,
   options: AppOptions = {},
 ) {
-  if (options.hostedDemo && (!options.accessToken || provider.mode !== "mock"))
-    throw new Error("Hosted demo requires a workspace token and mock AI");
+  if (!options.accountEnv && process.env.NODE_ENV !== "test")
+    throw new Error("Account authentication must be configured");
+  if (options.hostedDemo && provider.mode !== "mock")
+    throw new Error("Hosted demo requires mock AI");
   const app = express(),
     origin = options.origin ?? "http://127.0.0.1:5173";
   const sessions = new Sessions(store, {
@@ -47,7 +53,9 @@ export function createApp(
   app.locals.sessions = sessions;
   app.locals.frames = frames;
   const owner = (req: express.Request) =>
-    options.owner?.(req) ?? "local-development-user";
+    req.res?.locals.accountId ??
+    options.owner?.(req) ??
+    "local-development-user";
   app.disable("x-powered-by");
   if (options.trustProxyHops) app.set("trust proxy", options.trustProxyHops);
   app.use((req, res, next) => {
@@ -88,22 +96,19 @@ export function createApp(
         }),
     }),
   );
-  if (options.accessToken)
-    app.use("/api", (req, res, next) => {
-      const actual = Buffer.from(
-          req.headers.authorization?.replace(/^Bearer /, "") ?? "",
-        ),
-        expected = Buffer.from(options.accessToken!);
-      if (
-        actual.length !== expected.length ||
-        !timingSafeEqual(actual, expected)
-      )
-        return res.status(401).json({
-          error: "Workspace access token required",
-          code: "WORKSPACE_AUTH",
-        });
-      next();
-    });
+  const account =
+    options.accountEnv && accounts(store, options.accountEnv, origin);
+  const payments =
+    options.accountEnv &&
+    billing(store, options.accountEnv, origin, options.paymentProvider);
+  if (payments) {
+    app.get("/api/public/plan", (_req, res) => res.json(payments.plan));
+    app.post(
+      "/api/billing/webhook",
+      express.raw({ type: "application/json", limit: "128kb" }),
+      payments.webhook,
+    );
+  }
   app.use(express.json({ limit: "750kb" }));
   app.use((req, res, next) => {
     const started = Date.now();
@@ -119,6 +124,52 @@ export function createApp(
     });
     next();
   });
+  if (account && payments) {
+    const currency = z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .parse(options.accountEnv?.REPORTING_CURRENCY || "INR");
+    const savedCurrency = store.get<{ id: string; currency: string }>(
+      "journal_config",
+      "currency",
+      "tradzyn-system",
+    );
+    if (savedCurrency && savedCurrency.currency !== currency)
+      throw new Error(
+        "REPORTING_CURRENCY cannot change for an existing database",
+      );
+    if (!savedCurrency)
+      store.put(
+        "journal_config",
+        { id: "currency", currency },
+        "tradzyn-system",
+      );
+    app.locals.account = account;
+    app.use("/api/auth", account.router);
+    app.use("/api", (req, res, next) => {
+      const user = account.profile(req);
+      if (!user)
+        return res
+          .status(401)
+          .json({ error: "Sign in to continue", code: "AUTH_REQUIRED" });
+      res.locals.accountId = user.id;
+      next();
+    });
+    app.use("/api/journal", journal(store, owner, currency));
+    app.use("/api/billing", payments.router);
+    app.use(["/api/sessions", "/api/events"], (req, res, next) => {
+      const cleanup =
+        req.method === "DELETE" ||
+        (req.method === "POST" && /^\/[a-f0-9-]+\/stop$/i.test(req.path));
+      if (!cleanup && !payments.active(owner(req)))
+        return res.status(403).json({
+          error: "An active Premium subscription is required",
+          code: "PREMIUM_REQUIRED",
+          fatal: true,
+        });
+      next();
+    });
+  }
   app.param("id", (_req, _res, next, id) => {
     try {
       z.uuid().parse(id);
@@ -163,17 +214,13 @@ export function createApp(
       deploymentMode: options.hostedDemo ? "hosted_demo" : "local",
       ephemeralStorage: options.ephemeralStorage ?? false,
       privacyNotice: options.hostedDemo
-        ? "Shared demo workspace: selected frames are sent to this hosting server for mock processing. Use synthetic screens only; anyone with the demo token can review stored demo records."
+        ? "Hosted demo uses simulated processing. Use synthetic screens only."
         : null,
       model: provider.model ?? null,
       simulated: provider.mode === "mock",
       credentialsConfigured: provider.configured ?? provider.mode === "mock",
       connectionStatus: "unverified",
-      authentication: options.accessToken
-        ? options.hostedDemo
-          ? "shared demo bearer gate; single owner"
-          : "local bearer gate; single owner"
-        : "development-only; loopback binding; single local user",
+      authentication: account ? "account cookie" : "test fixture",
       requestBudget: options.budget ?? 100,
       timeoutMs: options.timeoutMs ?? 60000,
       ...sessions.settings(owner(req)),
@@ -224,7 +271,7 @@ export function createApp(
       .parse(req.body);
     res
       .status(201)
-      .json(sessions.create(body.title, provider.mode, owner(req)));
+      .json(sessions.create(body.title, provider.mode, owner(req), !account));
   });
   app.get("/api/sessions", (req, res) => {
     const q = z
@@ -265,7 +312,9 @@ export function createApp(
             status: "recording",
             startedAt: new Date().toISOString(),
             lastSeenAt: new Date().toISOString(),
-            rulesSnapshot: sessions.rules(o).filter((r) => r.enabled),
+            rulesSnapshot: account
+              ? []
+              : sessions.rules(o).filter((r) => r.enabled),
           },
           o,
         );
@@ -444,49 +493,51 @@ export function createApp(
       .type("text/csv")
       .send("\uFEFF" + rows.map((row) => row.map(cell).join(",")).join("\r\n"));
   });
-  app.get("/api/rules", (req, res) => res.json(sessions.rules(owner(req))));
-  app.post("/api/rules", (req, res) => {
-    const body = ruleSchema.parse(req.body),
-      o = owner(req);
-    res.status(201).json(
-      store.transaction(() => {
-        const r = store.put(
-          "rule",
-          { ...body, id: randomUUID(), version: 1 },
-          o,
-        );
-        sessions.audit("rule.created", r.id, o);
-        return r;
-      }),
-    );
-  });
-  app.put("/api/rules/:id", (req, res) => {
-    const o = owner(req),
-      old = store.get<any>("rule", String(req.params.id), o);
-    if (!old) throw fail(404, "Rule not found");
-    const body = ruleSchema.parse(req.body);
-    res.json(
-      store.transaction(() => {
-        const r = store.put(
-          "rule",
-          { ...body, id: old.id, version: (old.version ?? 1) + 1 },
-          o,
-        );
-        sessions.audit("rule.updated", r.id, o);
-        return r;
-      }),
-    );
-  });
-  app.delete("/api/rules/:id", (req, res) => {
-    const o = owner(req),
-      id = String(req.params.id);
-    if (!store.get("rule", id, o)) throw fail(404, "Rule not found");
-    store.transaction(() => {
-      store.delete("rule", id, o);
-      sessions.audit("rule.deleted", id, o);
+  if (!account) {
+    app.get("/api/rules", (req, res) => res.json(sessions.rules(owner(req))));
+    app.post("/api/rules", (req, res) => {
+      const body = ruleSchema.parse(req.body),
+        o = owner(req);
+      res.status(201).json(
+        store.transaction(() => {
+          const r = store.put(
+            "rule",
+            { ...body, id: randomUUID(), version: 1 },
+            o,
+          );
+          sessions.audit("rule.created", r.id, o);
+          return r;
+        }),
+      );
     });
-    res.status(204).end();
-  });
+    app.put("/api/rules/:id", (req, res) => {
+      const o = owner(req),
+        old = store.get<any>("rule", String(req.params.id), o);
+      if (!old) throw fail(404, "Rule not found");
+      const body = ruleSchema.parse(req.body);
+      res.json(
+        store.transaction(() => {
+          const r = store.put(
+            "rule",
+            { ...body, id: old.id, version: (old.version ?? 1) + 1 },
+            o,
+          );
+          sessions.audit("rule.updated", r.id, o);
+          return r;
+        }),
+      );
+    });
+    app.delete("/api/rules/:id", (req, res) => {
+      const o = owner(req),
+        id = String(req.params.id);
+      if (!store.get("rule", id, o)) throw fail(404, "Rule not found");
+      store.transaction(() => {
+        store.delete("rule", id, o);
+        sessions.audit("rule.deleted", id, o);
+      });
+      res.status(204).end();
+    });
+  }
   app.use("/api", (_req, res) =>
     res.status(404).json({ error: "Endpoint not found" }),
   );

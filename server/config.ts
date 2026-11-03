@@ -1,9 +1,13 @@
 import { z } from "zod";
 export function serverConfig(env: NodeJS.ProcessEnv) {
-  const hosted = env.DEPLOYMENT_MODE === "hosted_demo";
+  const hosted =
+    env.DEPLOYMENT_MODE === "hosted_demo" ||
+    env.DEPLOYMENT_MODE === "production";
   const config = z
     .object({
-      DEPLOYMENT_MODE: z.enum(["local", "hosted_demo"]).default("local"),
+      DEPLOYMENT_MODE: z
+        .enum(["local", "hosted_demo", "production"])
+        .default("local"),
       DEMO_EPHEMERAL_STORAGE: z.enum(["true", "false"]).default("false"),
       TRUST_PROXY_HOPS: z.coerce
         .number()
@@ -33,8 +37,6 @@ export function serverConfig(env: NodeJS.ProcessEnv) {
         .min(1)
         .max(30)
         .default(1),
-      DEV_NO_AUTH: z.enum(["true", "false"]).default("false"),
-      APP_ACCESS_TOKEN: z.string().optional(),
     })
     .parse({
       ...env,
@@ -43,32 +45,22 @@ export function serverConfig(env: NodeJS.ProcessEnv) {
     });
   if (config.CAPTURE_INTERVAL_SECONDS > config.AI_ANALYSIS_INTERVAL_SECONDS)
     throw new Error("Capture interval cannot exceed analysis interval");
-  if (
-    config.DEV_NO_AUTH !== "true" &&
-    (!config.APP_ACCESS_TOKEN || config.APP_ACCESS_TOKEN.length < 24)
-  )
-    throw new Error(
-      "Set a 24+ character APP_ACCESS_TOKEN, or explicitly enable DEV_NO_AUTH=true for local development",
-    );
-  if (config.APP_ACCESS_TOKEN && config.APP_ACCESS_TOKEN.length < 24)
-    throw new Error("APP_ACCESS_TOKEN must contain at least 24 characters");
   const origin = new URL(config.FRONTEND_ORIGIN);
   if (origin.origin !== config.FRONTEND_ORIGIN)
     throw new Error(
       "FRONTEND_ORIGIN must be an exact origin without path, credentials or trailing slash",
     );
   if (hosted) {
-    if (config.DEV_NO_AUTH !== "false" || !config.APP_ACCESS_TOKEN)
-      throw new Error(
-        "Hosted demo requires DEV_NO_AUTH=false and APP_ACCESS_TOKEN",
-      );
     if (origin.protocol !== "https:")
       throw new Error(
-        "Hosted demo requires an HTTPS FRONTEND_ORIGIN (Render supplies RENDER_EXTERNAL_URL)",
+        "Hosted deployment requires an HTTPS FRONTEND_ORIGIN (Render supplies RENDER_EXTERNAL_URL)",
       );
-    if ((env.AI_PROVIDER ?? "mock") !== "mock")
+    if (
+      config.DEPLOYMENT_MODE === "hosted_demo" &&
+      (env.AI_PROVIDER ?? "mock") !== "mock"
+    )
       throw new Error(
-        "Hosted demo is restricted to mock AI; use the local app for real AI testing",
+        "Hosted demo is restricted to mock AI; use local or production mode for real AI",
       );
   }
   const allowedHosts = ["127.0.0.1", "localhost", "[::1]", "::1"];

@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, it, expect, vi } from "vitest";
 import { Capture } from "../src/capture";
-import { api, ApiError, setWorkspaceToken, notifyPageClosed } from "../src/api";
+import { api, ApiError, notifyPageClosed } from "../src/api";
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  setWorkspaceToken("");
 });
 function browser() {
   const track = {
@@ -81,6 +80,23 @@ it("captures periodically with a one-frame latest queue, no overlapping sends an
   expect(track.stop).toHaveBeenCalledTimes(1);
   expect(track.removeEventListener).toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
+});
+it("keeps frame analysis and cleans up when the optional MediaRecorder fails", async () => {
+  const track = browser();
+  vi.stubGlobal("MediaRecorder", class {
+    constructor() {
+      throw new Error("Recorder unavailable");
+    }
+  });
+  const capture = new Capture();
+  const send = vi.fn(async () => {});
+  const error = vi.fn();
+  await capture.request();
+  await capture.begin(5, send, true, error);
+  expect(error).toHaveBeenCalledWith(expect.stringContaining("frame analysis is still active"));
+  expect(send).toHaveBeenCalledOnce();
+  await expect(capture.stop()).resolves.toBeUndefined();
+  expect(track.stop).toHaveBeenCalledOnce();
 });
 it("retries a lost transport response with exactly the same frame request", async () => {
   const transport = vi

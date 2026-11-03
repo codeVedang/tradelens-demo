@@ -22,7 +22,10 @@ export class Capture {
     return this.controller.signal;
   }
   async request() {
-    if (!navigator.mediaDevices?.getDisplayMedia)
+    if (
+      window.isSecureContext === false ||
+      !navigator.mediaDevices?.getDisplayMedia
+    )
       throw new Error(
         "Screen sharing requires a supported desktop browser on localhost or HTTPS.",
       );
@@ -48,9 +51,15 @@ export class Capture {
       clearInterval(this.timer);
       this.onEnded?.();
     };
-    this.stream
-      .getVideoTracks()[0]
-      .addEventListener("ended", this.ended, { once: true });
+    const track = this.stream.getVideoTracks()[0];
+    if (!track || track.readyState === "ended") {
+      this.stream.getTracks().forEach((item) => item.stop());
+      this.stream = undefined;
+      throw new Error(
+        "The browser did not provide an active screen-sharing track.",
+      );
+    }
+    track.addEventListener("ended", this.ended, { once: true });
     return this.stream;
   }
   async begin(
@@ -70,9 +79,14 @@ export class Capture {
     this.video = document.createElement("video");
     this.video.srcObject = this.stream;
     this.video.muted = true;
+    this.video.playsInline = true;
     await this.video.play();
     if (!this.running) return;
-    if (typeof MediaRecorder !== "undefined") {
+    if (saveVideo && typeof MediaRecorder === "undefined")
+      onError(
+        "Local video recording is unavailable; frame coaching continues.",
+      );
+    if (saveVideo && typeof MediaRecorder !== "undefined") {
       try {
         this.recorder = new MediaRecorder(this.stream);
         this.recorder.ondataavailable = (e) => {

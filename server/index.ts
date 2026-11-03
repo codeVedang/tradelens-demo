@@ -11,7 +11,7 @@ const app = createApp(store, provider, {
   origin: config.FRONTEND_ORIGIN,
   timeoutMs: config.AI_TIMEOUT_MS,
   budget: config.AI_REQUEST_BUDGET,
-  accessToken: config.APP_ACCESS_TOKEN,
+  accountEnv: process.env,
   defaultIntervalSeconds: config.AI_ANALYSIS_INTERVAL_SECONDS,
   defaultCaptureIntervalSeconds: config.CAPTURE_INTERVAL_SECONDS,
   allowedHosts: config.ALLOWED_HOSTS,
@@ -34,18 +34,26 @@ const recovery = setInterval(() => {
 recovery.unref();
 app.use((_req, res, next) => {
   res.setHeader(
+    "Permissions-Policy",
+    "display-capture=(self), camera=(), microphone=()",
+  );
+  res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.googleusercontent.com; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   );
   next();
 });
 app.use(express.static("dist", { dotfiles: "deny" }));
+app.get(/^\/app(?:\/|$)/, (req, res, next) => {
+  if (!app.locals.account?.profile(req)) return res.redirect("/login");
+  next();
+});
 app.get("/{*path}", (_req, res) =>
   res.sendFile("index.html", { root: "dist" }),
 );
 const server = app.listen(config.PORT, config.LISTEN_HOST, () =>
   console.info(
-    `TradeLens: http://127.0.0.1:${config.PORT} (${provider.mode}; connection unverified)`,
+    `Tradzyn: http://127.0.0.1:${config.PORT} (${provider.mode}; connection unverified)`,
   ),
 );
 let stopping = false;

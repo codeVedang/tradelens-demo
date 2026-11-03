@@ -1,7 +1,3 @@
-let workspaceToken = "";
-export function setWorkspaceToken(value: string) {
-  workspaceToken = value;
-}
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -39,9 +35,6 @@ export async function api<T = any>(
         method,
         headers: {
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-          ...(workspaceToken
-            ? { Authorization: "Bearer " + workspaceToken }
-            : {}),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
@@ -81,11 +74,7 @@ export async function api<T = any>(
   throw new Error("Request failed");
 }
 export async function exportReport(id: string, format: "json" | "csv") {
-  const response = await fetch(`/api/sessions/${id}/export?format=${format}`, {
-    headers: workspaceToken
-      ? { Authorization: "Bearer " + workspaceToken }
-      : {},
-  });
+  const response = await fetch(`/api/sessions/${id}/export?format=${format}`);
   if (!response.ok) {
     const error = await response
       .json()
@@ -102,17 +91,7 @@ export async function exportReport(id: string, format: "json" | "csv") {
 }
 export function notifyPageClosed(id: string, capturedCount: number) {
   const body = JSON.stringify({ reason: "page_closed", capturedCount });
-  if (workspaceToken) {
-    void fetch(`/api/sessions/${id}/stop`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + workspaceToken,
-      },
-      body,
-      keepalive: true,
-    }).catch(() => {});
-  } else if (navigator.sendBeacon) {
+  if (navigator.sendBeacon) {
     navigator.sendBeacon(
       `/api/sessions/${id}/stop`,
       new Blob([body], { type: "application/json" }),

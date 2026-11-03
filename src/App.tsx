@@ -1,3 +1,5 @@
+import Journal from "./Journal";
+import { AccountSettings, type Profile, type Subscription } from "./Account";
 import BrandMark from "./components/BrandMark";
 import Empty from "./components/Empty";
 import SessionList from "./components/SessionList";
@@ -33,29 +35,36 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  api,
-  ApiError,
-  exportReport,
-  notifyPageClosed,
-  setWorkspaceToken,
-} from "./api";
+import { api, ApiError, exportReport, notifyPageClosed } from "./api";
 import { Capture } from "./capture";
-import type { Session, Rule } from "../shared/schema";
+import type { Session } from "../shared/schema";
 const pages = [
   "Overview",
   "Live coach",
   "Session reports",
-  "Strategy & rules",
+  "Trading journal",
   "Settings",
 ];
 const icons = [LayoutDashboard, Focus, FileText, BookOpen, Settings];
 export const duration = (seconds: number) =>
   `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-export default function App() {
-  const [page, setPage] = useState("Overview"),
+export default function App({
+  account,
+  subscription,
+  logout,
+}: {
+  account?: Profile;
+  subscription?: Subscription;
+  logout?: () => void;
+} = {}) {
+  const premium = !account || subscription?.active === true;
+  const [addJournal, setAddJournal] = useState(false);
+  const starting = useRef(false);
+  const [captureError, setCaptureError] = useState("");
+  const [page, setPage] = useState(
+      location.pathname === "/app/settings" ? "Settings" : "Overview",
+    ),
     [sessions, setSessions] = useState<Session[]>([]),
-    [rules, setRules] = useState<Rule[]>([]),
     [config, setConfig] = useState<any>(),
     [active, setActive] = useState<Session>(),
     [selected, setSelected] = useState<Session>(),
@@ -71,13 +80,11 @@ export default function App() {
     [scenario, setScenario] = useState("normal"),
     [analysis, setAnalysis] = useState("Idle"),
     [videoUrl, setVideoUrl] = useState(""),
-    [ruleEdit, setRuleEdit] = useState<Rule | null>(),
     [notes, setNotes] = useState("");
   const [captured, setCaptured] = useState(0),
     [lastLatency, setLastLatency] = useState<number | null>(null),
     [processing, setProcessing] = useState<any[]>([]),
     [videoSession, setVideoSession] = useState(""),
-    [needToken, setNeedToken] = useState(false),
     [notice, setNotice] = useState(""),
     [reviewFilter, setReviewFilter] = useState("all");
   const openSequence = useRef(0),
@@ -86,17 +93,17 @@ export default function App() {
     failureCount = useRef(0);
   const capture = useRef<Capture | undefined>(undefined),
     activeRef = useRef<Session | undefined>(undefined),
-    stopRef = useRef<() => Promise<void>>(async () => {}),
+    stopRef = useRef<(reason?: "user" | "capture_ended") => Promise<void>>(
+      async () => {},
+    ),
     preview = useRef<HTMLVideoElement>(null),
     urlRef = useRef("");
   const refresh = async () => {
-    const [ss, rr, cc] = await Promise.all([
-      api<Session[]>("/sessions"),
-      api<Rule[]>("/rules"),
+    const [ss, cc] = await Promise.all([
+      premium ? api<Session[]>("/sessions") : Promise.resolve([]),
       api("/config/status"),
     ]);
     setSessions(ss);
-    setRules(rr);
     setConfig(cc);
     return ss;
   };
@@ -107,10 +114,10 @@ export default function App() {
       })
       .catch((e) => {
         setError(e.message);
-        if (e instanceof ApiError && e.code === "WORKSPACE_AUTH")
-          setNeedToken(true);
       })
       .finally(() => setLoading(false));
+  }, [premium]);
+  useEffect(() => {
     return () => {
       const current = activeRef.current;
       capture.current?.cancel();
@@ -159,7 +166,11 @@ export default function App() {
         "POST",
         { capturedCount: capture.current?.capturedCount ?? 0 },
         { timeoutMs: 15000 },
-      ).catch((e) => setError(e.message));
+      ).catch((e) => {
+        setError(e.message);
+        if (e instanceof ApiError && ["PREMIUM_REQUIRED", "AUTH_REQUIRED"].includes(e.code ?? ""))
+          void stopRef.current();
+      });
     }, 10000);
     return () => clearInterval(heartbeat);
   }, [active]);
@@ -187,8 +198,6 @@ export default function App() {
       await fn();
     } catch (e) {
       setError((e as Error).message);
-      if (e instanceof ApiError && e.code === "WORKSPACE_AUTH")
-        setNeedToken(true);
     } finally {
       setBusy(false);
     }
@@ -227,7 +236,7 @@ export default function App() {
     setProcessing(trace);
     setReport(nextReport);
   };
-  const stop = async () => {
+  const stop = async (reason: "user" | "capture_ended" = "user") => {
     if (stopPromise.current) return stopPromise.current;
     const s = activeRef.current;
     if (!s) return;
@@ -239,6 +248,7 @@ export default function App() {
         const [blob, r] = await Promise.all([
           capture.current?.stop(),
           api(`/sessions/${s.id}/stop`, "POST", {
+            reason,
             capturedCount: capture.current?.capturedCount ?? 0,
           }),
         ]);
@@ -280,16 +290,25 @@ export default function App() {
     }
   };
   stopRef.current = stop;
-  const start = () =>
-    run(async () => {
+  const start = () => {
+    if (!premium || !consent || starting.current || activeRef.current) return;
+    starting.current = true;
+    setCaptureError("");
+    void run(async () => {
       const engine = new Capture();
       stoppingRef.current = false;
       failureCount.current = 0;
       openSequence.current++;
       capture.current = engine;
       let s: Session | undefined;
+      let started = false;
       try {
         await engine.request();
+        engine.onEnded = () => {
+          setCaptureError("Screen sharing ended.");
+          if (activeRef.current) void stopRef.current("capture_ended");
+          else engine.cancel();
+        };
         URL.revokeObjectURL(urlRef.current);
         urlRef.current = "";
         setVideoUrl("");
@@ -302,18 +321,20 @@ export default function App() {
         s = await api("/sessions", "POST", {
           title: `Session · ${new Date().toLocaleDateString()}`,
         });
-        s = await api(`/sessions/${s!.id}/start`, "POST", {});
+        if (engine.signal.aborted)
+          throw new Error("Screen sharing ended before the session started.");
+        s = await api("/sessions/" + s!.id + "/start", "POST", {});
+        started = true;
+        if (engine.signal.aborted)
+          throw new Error("Screen sharing ended during session setup.");
         activeRef.current = s;
         setActive(s);
+        setConsent(false);
         setSelected(s);
         setEvents([]);
         setReport(undefined);
         setElapsed(0);
         setPage("Live coach");
-        engine.onEnded = () => {
-          setError("Screen sharing ended. Finalizing your session.");
-          void stopRef.current();
-        };
         await engine.begin(
           s!.intervalSeconds,
           async (image, seconds, meta) => {
@@ -354,6 +375,14 @@ export default function App() {
               await refresh();
             } catch (e) {
               if (engine.signal.aborted || stoppingRef.current) return;
+              setCaptureError((e as Error).message);
+              if (
+                e instanceof ApiError &&
+                ["PREMIUM_REQUIRED", "AUTH_REQUIRED"].includes(e.code ?? "")
+              ) {
+                void stopRef.current();
+                return;
+              }
               setAnalysis("Analysis failed");
               failureCount.current++;
               if (
@@ -370,7 +399,10 @@ export default function App() {
             }
           },
           saveVideo,
-          setError,
+          (message) => {
+            setError(message);
+            setCaptureError(message);
+          },
           {
             captureIntervalSeconds:
               s!.captureIntervalSeconds ?? config.captureIntervalSeconds ?? 1,
@@ -378,15 +410,23 @@ export default function App() {
           },
         );
       } catch (e) {
+        setCaptureError((e as Error).message);
         await engine.stop();
         if (s) {
-          await api(`/sessions/${s.id}/stop`, "POST", {}).catch(() => {});
+          await api(
+            "/sessions/" + s.id + (started ? "/stop" : ""),
+            started ? "POST" : "DELETE",
+            started ? {} : undefined,
+          ).catch(() => {});
           activeRef.current = undefined;
           setActive(undefined);
         }
         throw e;
+      } finally {
+        starting.current = false;
       }
     });
+  };
   const shown = active ?? selected;
   const currentSession = sessions.find((s) => s.id === shown?.id) ?? shown;
   const confirmed = events.filter((e) => e.status === "confirmed").length,
@@ -512,9 +552,16 @@ export default function App() {
   return (
     <div className="app">
       <aside>
-        <a className="brand" href="#" aria-label="Tradzyn overview" onClick={() => setPage("Overview")}>
+        <a
+          className="brand"
+          href="#"
+          aria-label="Tradzyn overview"
+          onClick={() => setPage("Overview")}
+        >
           <BrandMark className="brand-icon" />
-          <span className="brand-name">Trad<span>zyn</span></span>
+          <span className="brand-name">
+            Trad<span>zyn</span>
+          </span>
         </a>
         <div className="workspace">
           <span className="avatar">P</span>
@@ -530,7 +577,7 @@ export default function App() {
             return (
               <button
                 key={p}
-                aria-label={p}
+                aria-label={account && p === "Live coach" ? "AI Companion" : p}
                 className={p === page ? "nav active" : "nav"}
                 onClick={() => {
                   setPage(p);
@@ -539,7 +586,7 @@ export default function App() {
                 }}
               >
                 <Icon size={19} />
-                {p}
+                {account && p === "Live coach" ? "AI Companion" : p}
                 {p === "Live coach" && (
                   <span className={"nav-dot " + (active ? "green" : "")} />
                 )}
@@ -573,7 +620,8 @@ export default function App() {
           <div className="profile">
             <span className="avatar">LT</span>
             <div>
-              Local trader<small>Development workspace</small>
+              {account?.name ?? "Local trader"}
+              <small>Personal workspace</small>
             </div>
             <Settings size={16} />
           </div>
@@ -587,9 +635,7 @@ export default function App() {
           </div>
           <div className="header-status">
             <span className="dot green" />
-            {config?.deploymentMode === "hosted_demo"
-              ? "Shared demo"
-              : "Local workspace"}
+            {account?.name ?? "Local workspace"}
             <span className="avatar">LT</span>
           </div>
         </header>
@@ -599,13 +645,15 @@ export default function App() {
               <div className="eyebrow accent">YOUR EDGE IS IN YOUR PROCESS</div>
               <h1>
                 {page === "Overview"
-                  ? "A clearer view of your trading."
+                  ? account
+                    ? "Performance dashboard"
+                    : "A clearer view of your trading."
                   : page === "Live coach"
                     ? "Stay present. Trade with intention."
                     : page === "Session reports"
                       ? "Reflect. Refine. Repeat."
-                      : page === "Strategy & rules"
-                        ? "Define your discipline."
+                      : page === "Trading journal"
+                        ? "Trading journal"
                         : "Your workspace, your control."}
               </h1>
               <p>
@@ -615,8 +663,8 @@ export default function App() {
                     ? "Capture your process and review observations as they arrive."
                     : page === "Session reports"
                       ? "Review the evidence and add the context only you can provide."
-                      : page === "Strategy & rules"
-                        ? "Turn your trading process into a personal execution checklist."
+                      : page === "Trading journal"
+                        ? "Record what you expected, what happened, and what you learned."
                         : "Configure analysis, privacy, and data retention."}
               </p>
             </div>
@@ -646,45 +694,13 @@ export default function App() {
                 : ""}
             </p>
           )}
-          {needToken && (
-            <form
-              className="panel settings"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const data = new FormData(e.currentTarget);
-                setWorkspaceToken(String(data.get("workspaceToken") ?? ""));
-                void run(async () => {
-                  const ss = await refresh();
-                  setNeedToken(false);
-                  setError("");
-                  if (ss[0]) await openSession(ss[0]);
-                });
-              }}
-            >
-              <h3>Unlock local workspace</h3>
-              <p>
-                Enter APP_ACCESS_TOKEN from the backend configuration. This is a
-                separate workspace token, not your OpenAI API key. It stays in
-                memory and is cleared on reload.
-              </p>
-              <label>
-                Workspace access token
-                <input
-                  name="workspaceToken"
-                  type="password"
-                  autoComplete="off"
-                  required
-                />
-              </label>
-              <button className="primary">Unlock workspace</button>
-            </form>
-          )}
           {notice && (
             <p role="status" className="notice">
               {notice}
             </p>
           )}
-          {(page === "Overview" || page === "Live coach") && (
+          {((!account && page === "Overview") ||
+            (premium && page === "Live coach")) && (
             <>
               <section className="hero">
                 <div className="hero-copy">
@@ -702,9 +718,9 @@ export default function App() {
                       : "A better session starts\nwith awareness."}
                   </h2>
                   <p>
-                    Your personal coach for strategy adherence and trading
-                    discipline. Capture a session, notice patterns, and make
-                    your next one more intentional.
+                    Your personal coach for reflecting on visible trading
+                    activity. Capture a session, notice patterns, and make your
+                    next one more intentional.
                   </p>
                   <div className="hero-buttons">
                     <button
@@ -791,7 +807,16 @@ export default function App() {
               </div>
             </>
           )}
-          {page === "Live coach" && (
+          {active && page !== "Live coach" && (
+            <div className="notice live-status" role="status">
+              <span className="dot green" /> Screen sharing active ·{" "}
+              {duration(elapsed)}
+              <button className="danger" onClick={() => void stopRef.current()}>
+                Stop recording
+              </button>
+            </div>
+          )}
+          {page === "Live coach" && premium && (
             <div className="two-col">
               <section className="panel">
                 <div className="panel-heading">
@@ -824,6 +849,37 @@ export default function App() {
                   )}
                 </div>
                 <div className="capture-controls">
+                  {import.meta.env.DEV && (
+                    <details className="processing capture-diagnostics">
+                      <summary>Capture diagnostics</summary>
+                      <p>
+                        Secure context: {window.isSecureContext ? "yes" : "no"}{" "}
+                        · Screen sharing API:{" "}
+                        {navigator.mediaDevices &&
+                        "getDisplayMedia" in navigator.mediaDevices
+                          ? "available"
+                          : "unavailable"}{" "}
+                        · MediaRecorder:{" "}
+                        {typeof MediaRecorder === "undefined"
+                          ? "unavailable"
+                          : "available"}
+                      </p>
+                      <p>
+                        Sharing:{" "}
+                        {active
+                          ? paused
+                            ? "paused"
+                            : "active"
+                          : starting.current
+                            ? "starting"
+                            : "inactive"}{" "}
+                        · Session: {currentSession?.status ?? "none"} · Frames:{" "}
+                        {captured} · Processing: {analysis} · Latency:{" "}
+                        {lastLatency === null ? "none" : lastLatency + " ms"}
+                      </p>
+                      <p>Latest error: {captureError || "none"}</p>
+                    </details>
+                  )}
                   {!active ? (
                     <>
                       <label className="check">
@@ -858,7 +914,7 @@ export default function App() {
                           >
                             <option value="normal">Normal observation</option>
                             <option value="deviation">
-                              Possible rule deviation
+                              Possible behavior to review
                             </option>
                             <option value="insufficient">
                               Insufficient evidence
@@ -952,7 +1008,7 @@ export default function App() {
               </section>
             </div>
           )}
-          {page === "Overview" && (
+          {page === "Overview" && !account && (
             <>
               <div className="two-col">
                 <section className="panel">
@@ -984,12 +1040,12 @@ export default function App() {
                             >
                               <stop
                                 offset="0%"
-                                stopColor="#EF2B2D"
+                                stopColor="#FF1738"
                                 stopOpacity={0.25}
                               />
                               <stop
                                 offset="100%"
-                                stopColor="#EF2B2D"
+                                stopColor="#FF1738"
                                 stopOpacity={0}
                               />
                             </linearGradient>
@@ -1016,7 +1072,7 @@ export default function App() {
                           <Area
                             type="monotone"
                             dataKey="frames"
-                            stroke="#EF2B2D"
+                            stroke="#FF1738"
                             fill="url(#fill)"
                             strokeWidth={2}
                           />
@@ -1095,7 +1151,7 @@ export default function App() {
               </div>
             </>
           )}
-          {page === "Session reports" && (
+          {page === "Session reports" && premium && (
             <>
               <SessionList
                 sessions={sessions}
@@ -1208,12 +1264,7 @@ export default function App() {
                       {report.improvements.map((s: string) => (
                         <p key={s}>{s}</p>
                       ))}
-                      <p className="notice">
-                        Potential rule-linked findings:{" "}
-                        {report.potentialRuleViolations.length}. These require
-                        review and do not establish violations.{" "}
-                        {report.limitations.join(" ")}
-                      </p>
+                      <p className="notice">{report.limitations.join(" ")}</p>
                     </>
                   ) : (
                     <div className="notice">
@@ -1359,26 +1410,7 @@ export default function App() {
                   </details>
                   {report && (
                     <details className="processing">
-                      <summary>Rule snapshot & recurring observations</summary>
-                      <p>
-                        Rules below were captured at session start. Later edits
-                        and deletions do not rewrite this context.
-                      </p>
-                      {report.rules?.map((item: any) => (
-                        <div key={item.rule.id}>
-                          <h4>
-                            {item.rule.title} · v{item.rule.version ?? 1}
-                          </h4>
-                          <p>
-                            {item.rule.description} · {item.findings.length}{" "}
-                            linked findings ·{" "}
-                            {item.assessment.replaceAll("_", " ")}
-                          </p>
-                        </div>
-                      ))}
-                      {!report.rules?.length && (
-                        <p>No enabled rule snapshot is available.</p>
-                      )}
+                      <summary>Recurring observations</summary>
                       <h4>Repeated recorded observations</h4>
                       <p>
                         Counts describe repeated finding text within this
@@ -1398,194 +1430,40 @@ export default function App() {
               )}
             </>
           )}
-          {page === "Strategy & rules" && (
-            <section className="panel">
-              <div className="panel-heading">
-                <h3>Your execution playbook</h3>
-                <button
-                  className="primary small"
-                  onClick={() => setRuleEdit(null)}
-                >
-                  <Plus size={15} />
-                  Add rule
+          {account && (page === "Overview" || page === "Trading journal") && (
+            <Journal
+              dashboard={page === "Overview"}
+              addOnOpen={addJournal}
+              onOpened={() => setAddJournal(false)}
+              onJournal={(add) => {
+                setAddJournal(Boolean(add));
+                setPage("Trading journal");
+              }}
+              onCompanion={() => setPage("Live coach")}
+            />
+          )}
+          {!premium &&
+            (page === "Live coach" || page === "Session reports") && (
+              <section className="panel settings">
+                <span className="badge mock">PREMIUM</span>
+                <h3>AI Screen Recording Companion</h3>
+                <p>
+                  Share a selected screen, review observations, and save session
+                  reports with an active Premium subscription.
+                </p>
+                <button className="primary" onClick={() => setPage("Settings")}>
+                  View subscription
                 </button>
-              </div>
-              <p className="notice">
-                Rules are reference context. Screen images may not show enough
-                information to verify risk, orders, sessions, or loss streaks.
-              </p>
-              {ruleEdit !== undefined && (
-                <form
-                  className="rule-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const data = new FormData(e.currentTarget);
-                    void run(async () => {
-                      await api(
-                        ruleEdit ? `/rules/${ruleEdit.id}` : "/rules",
-                        ruleEdit ? "PUT" : "POST",
-                        {
-                          title: data.get("title"),
-                          description: data.get("description"),
-                          enabled: data.get("enabled") === "on",
-                          category: data.get("category"),
-                          numericLimit: data.get("numericLimit")
-                            ? Number(data.get("numericLimit"))
-                            : null,
-                          sessionWindow:
-                            String(data.get("sessionWindow") ?? "").trim() ||
-                            null,
-                        },
-                      );
-                      setRuleEdit(undefined);
-                      await refresh();
-                    });
-                  }}
-                  key={ruleEdit?.id ?? "new"}
-                >
-                  <label>
-                    Rule name
-                    <input
-                      name="title"
-                      required
-                      maxLength={100}
-                      defaultValue={ruleEdit?.title}
-                      placeholder="e.g. Review risk before every entry"
-                    />
-                  </label>
-                  <label>
-                    Rule category
-                    <select
-                      name="category"
-                      defaultValue={ruleEdit?.category ?? "strategy_entry"}
-                    >
-                      <option value="permitted_sessions">
-                        Permitted trading sessions
-                      </option>
-                      <option value="max_trades">
-                        Maximum trades per session
-                      </option>
-                      <option value="max_risk">
-                        Maximum configured risk (%)
-                      </option>
-                      <option value="stop_loss">Stop-loss requirements</option>
-                      <option value="consecutive_losses">
-                        Trading after consecutive losses
-                      </option>
-                      <option value="strategy_entry">
-                        Strategy-entry requirements
-                      </option>
-                      <option value="exit_management">
-                        Exit-management rules
-                      </option>
-                    </select>
-                  </label>
-                  <label>
-                    Numeric limit (optional)
-                    <input
-                      name="numericLimit"
-                      type="number"
-                      min="0.01"
-                      max="100000"
-                      step="any"
-                      defaultValue={ruleEdit?.numericLimit ?? ""}
-                    />
-                  </label>
-                  <label>
-                    Permitted time window & timezone (optional)
-                    <input
-                      name="sessionWindow"
-                      maxLength={200}
-                      placeholder="e.g. 09:15–11:00 Asia/Kolkata"
-                      defaultValue={ruleEdit?.sessionWindow ?? ""}
-                    />
-                  </label>
-                  <label>
-                    Requirement
-                    <textarea
-                      name="description"
-                      required
-                      maxLength={2000}
-                      defaultValue={ruleEdit?.description}
-                      placeholder="Describe your permitted sessions, risk limit, stop-loss requirements or personal checklist."
-                    />
-                  </label>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      name="enabled"
-                      defaultChecked={ruleEdit?.enabled ?? true}
-                    />
-                    Enabled
-                  </label>
-                  <div className="actions">
-                    <button className="primary small" disabled={busy}>
-                      Save rule
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRuleEdit(undefined)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              )}
-              {rules.length ? (
-                rules.map((r) => (
-                  <div className="rule-row" key={r.id}>
-                    <BookOpen size={21} />
-                    <div>
-                      <h4>{r.title}</h4>
-                      <p>{r.description}</p>
-                      <small>
-                        {r.category?.replaceAll("_", " ") ?? "strategy entry"} ·
-                        version {r.version ?? 1}
-                        {r.numericLimit != null
-                          ? ` · limit ${r.numericLimit}`
-                          : ""}
-                        {r.sessionWindow ? ` · ${r.sessionWindow}` : ""}
-                      </small>
-                    </div>
-                    <button
-                      className={r.enabled ? "toggle enabled" : "toggle"}
-                      aria-label={`${r.enabled ? "Disable" : "Enable"} ${r.title}`}
-                      onClick={() =>
-                        void run(async () => {
-                          await api(`/rules/${r.id}`, "PUT", {
-                            ...r,
-                            enabled: !r.enabled,
-                          });
-                          await refresh();
-                        })
-                      }
-                    >
-                      {r.enabled ? "Enabled" : "Disabled"}
-                    </button>
-                    <button className="small" onClick={() => setRuleEdit(r)}>
-                      Edit
-                    </button>
-                    <button
-                      aria-label={`Delete ${r.title}`}
-                      onClick={() =>
-                        void run(async () => {
-                          await api(`/rules/${r.id}`, "DELETE");
-                          await refresh();
-                        })
-                      }
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <Empty
-                  icon={BookOpen}
-                  title="Make your process explicit"
-                  text="Add your first rule. Your strategy belongs to you; the coach helps you review it."
-                />
-              )}
-            </section>
+              </section>
+            )}
+          {page === "Settings" && account && logout && (
+            <AccountSettings
+              profile={account}
+              subscription={subscription}
+              logout={() => {
+                void stopRef.current().finally(logout);
+              }}
+            />
           )}
           {page === "Settings" && config && (
             <div className="two-col">
@@ -1680,8 +1558,8 @@ export default function App() {
                     : analysis}
                 </p>
                 <p>
-                  Sessions, rules, notes, corrections and reports persist
-                  locally. Frames are transient. Full videos are never stored on
+                  Sessions, notes, corrections and reports persist in your
+                  account. Frames are transient. Full videos are never stored on
                   the server.
                 </p>
               </section>
@@ -1721,11 +1599,6 @@ export default function App() {
                   In OpenAI mode, selected screenshots leave your device.
                   Provider retention policies apply even though this app
                   requests no response storage.
-                </p>
-                <p className="notice">
-                  {config.deploymentMode === "hosted_demo"
-                    ? "Shared demonstration workspace protected by an access token. Everyone holding that token shares the same demo records. Use synthetic screens only. Real AI is disabled in this hosted demo."
-                    : "Local development only: no sign-in, a single local owner, and loopback network binding. Add authentication and tenant authorization before deployment."}
                 </p>
               </section>
             </div>

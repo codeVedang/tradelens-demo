@@ -152,42 +152,6 @@ function service() {
     getSessions: () => sessions,
   };
 }
-it("creates structured rules, edits and disables them, and deletes a rule", async () => {
-  const svc = service();
-  render(<App />);
-  await screen.findAllByText("MOCK MODE");
-  fireEvent.click(screen.getByRole("button", { name: "Strategy & rules" }));
-  fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
-  fireEvent.change(screen.getByLabelText("Rule name"), {
-    target: { value: "Risk checklist" },
-  });
-  fireEvent.change(screen.getByLabelText("Rule category"), {
-    target: { value: "max_risk" },
-  });
-  fireEvent.change(screen.getByLabelText("Numeric limit (optional)"), {
-    target: { value: "1" },
-  });
-  fireEvent.change(screen.getByLabelText("Requirement"), {
-    target: { value: "Review configured risk" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
-  await screen.findByText("Risk checklist");
-  expect(svc.getRules()[0].numericLimit).toBe(1);
-  fireEvent.click(
-    screen.getByRole("button", { name: "Disable Risk checklist" }),
-  );
-  await screen.findByRole("button", { name: "Enable Risk checklist" });
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-  fireEvent.change(screen.getByLabelText("Rule name"), {
-    target: { value: "Updated risk checklist" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
-  await screen.findByText("Updated risk checklist");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Delete Updated risk checklist" }),
-  );
-  await waitFor(() => expect(svc.getRules()).toHaveLength(0));
-});
 it("runs a mocked browser capture through live observations, pause/resume, report review and saved notes", async () => {
   const svc = service();
   vi.spyOn(Capture.prototype, "request").mockResolvedValue({} as MediaStream);

@@ -23,6 +23,8 @@ const files = [
   ".dockerignore",
   "docs/HOSTED_DEMO.md",
   "docs/API.md",
+  "docs/AUTHENTICATION_SETUP.md",
+  "docs/SUBSCRIPTION_SETUP.md",
   "docs/TESTING.md",
   "docs/DEPLOYMENT.md",
   "docs/IMPLEMENTATION_REPORT.md",

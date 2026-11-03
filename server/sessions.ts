@@ -61,7 +61,12 @@ export class Sessions {
       .all<any>("rule", owner)
       .map((r) => ({ ...r, ...ruleSchema.parse(r), version: r.version ?? 1 }));
   }
-  create(title: string, mode: string, owner: string) {
+  create(
+    title: string,
+    mode: string,
+    owner: string,
+    includeLegacyRules = false,
+  ) {
     const prefs = this.settings(owner);
     return this.store.transaction(() => {
       const s = this.store.put<Session>(
@@ -81,7 +86,9 @@ export class Sessions {
           mode,
           intervalSeconds: prefs.intervalSeconds,
           captureIntervalSeconds: prefs.captureIntervalSeconds,
-          rulesSnapshot: this.rules(owner).filter((r) => r.enabled),
+          rulesSnapshot: includeLegacyRules
+            ? this.rules(owner).filter((r) => r.enabled)
+            : [],
         },
         owner,
       );

@@ -308,11 +308,9 @@ describe("providers", () => {
     expect(sent.text.format.type).toBe("json_schema");
     expect(sent.input[1].content[1].type).toBe("input_image");
   });
-  it("switches safely and requires explicit credentials", () => {
+  it("uses real AI only when explicitly configured with a key", () => {
     expect(createProvider({}).mode).toBe("mock");
-    expect(() => createProvider({ AI_PROVIDER: "openai" })).toThrow(
-      "OPENAI_API_KEY",
-    );
+    expect(createProvider({ AI_PROVIDER: "openai" }).mode).toBe("mock");
     expect(
       createProvider({ AI_PROVIDER: "openai", OPENAI_API_KEY: "test-only" })
         .mode,

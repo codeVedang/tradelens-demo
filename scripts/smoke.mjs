@@ -5,13 +5,16 @@ import path from "node:path";
 import net from "node:net";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { Store } from "../dist-server/server/db.js";
+import { seedDemo } from "../dist-server/server/accounts.js";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "tradelens-smoke-"));
 const reservation = net.createServer();
 await new Promise((resolve) => reservation.listen(0, "127.0.0.1", resolve));
 const port = reservation.address().port;
 await new Promise((resolve) => reservation.close(resolve));
-const base = `http://127.0.0.1:${port}`,
-  token = "smoke-test-workspace-token-24-chars";
+const base = `http://127.0.0.1:${port}`;
+const database = path.join(root, "coach.sqlite");
+let sessionCookie = "";
 let child;
 async function launch() {
   child = spawn(process.execPath, ["dist-server/server/index.js"], {
@@ -19,10 +22,12 @@ async function launch() {
       ...process.env,
       PORT: String(port),
       FRONTEND_ORIGIN: base,
-      DATABASE_PATH: path.join(root, "coach.sqlite"),
+      DATABASE_PATH: database,
       AI_PROVIDER: "mock",
-      DEV_NO_AUTH: "false",
-      APP_ACCESS_TOKEN: token,
+      DEPLOYMENT_MODE: "local",
+      NODE_ENV: "development",
+      ENABLE_DEMO_LOGIN: "true",
+      GOOGLE_CALLBACK_URL: "",
       AI_ANALYSIS_INTERVAL_SECONDS: "5",
     },
     stdio: "ignore",
@@ -48,7 +53,7 @@ async function call(url, method = "GET", body, expected = 200) {
   const res = await fetch(base + "/api" + url, {
     method,
     headers: {
-      Authorization: "Bearer " + token,
+      Cookie: sessionCookie,
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -57,19 +62,40 @@ async function call(url, method = "GET", body, expected = 200) {
   return expected === 204 ? undefined : res.json();
 }
 try {
+  const store = await Store.open(database);
+  const demo = seedDemo(store);
+  store.close();
   await launch();
   assert.equal((await fetch(base + "/api/sessions")).status, 401);
   assert.equal((await fetch(base)).status, 200);
-  const rule = await call(
-    "/rules",
+  const landing = await fetch(base);
+  assert.match(await landing.text(), /Tradzyn/);
+  assert.equal(
+    (await fetch(base + "/app", { redirect: "manual" })).headers.get(
+      "location",
+    ),
+    "/login",
+  );
+  const signedIn = await fetch(base + "/api/auth/demo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(demo),
+  });
+  assert.equal(signedIn.status, 200);
+  sessionCookie = signedIn.headers.get("set-cookie").split(";")[0];
+  await call("/rules", "GET", undefined, 404);
+  const journal = await call(
+    "/journal",
     "POST",
     {
-      title: "Smoke checklist",
-      description: "Synthetic reference only",
-      enabled: true,
+      date: "2026-10-01",
+      notes: "Isolated smoke entry",
+      expected: "10",
+      real: "-2.50",
     },
     201,
   );
+  assert.equal(journal.realCents, -250);
   const session = await call(
     "/sessions",
     "POST",
@@ -105,11 +131,13 @@ try {
   await launch();
   const reopened = await call(`/sessions/${session.id}/report`);
   assert.equal(reopened.confirmed.length, 1);
-  assert.equal((await call("/rules"))[0].id, rule.id);
+  assert.ok((await call("/journal")).some((row) => row.id === journal.id));
+  await call("/journal/" + journal.id, "DELETE", undefined, 204);
   await call(`/sessions/${session.id}`, "DELETE", undefined, 204);
-  await call(`/rules/${rule.id}`, "DELETE", undefined, 204);
+  await call("/auth/logout", "POST", undefined, 204);
+  await call("/journal", "GET", undefined, 401);
   console.info(
-    "PASS: compiled startup/static page, bearer gate, rule/session/frame flow, idempotency, review/report/export, database restart persistence and deletion. No paid API calls.",
+    "PASS: compiled startup/static page, protected routes, demo cookie login, journal/session/frame flow, idempotency, review/report/export, database restart persistence and deletion. No paid API calls.",
   );
 } finally {
   await stop();

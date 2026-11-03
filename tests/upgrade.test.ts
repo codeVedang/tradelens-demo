@@ -331,16 +331,16 @@ it("validates rule limits, dates, resource IDs and fully decodes uploaded images
     .send({ ...frame(), image: "data:image/jpeg;base64,/9j/2Q==" })
     .expect(400);
 });
-it("enforces a workspace gate, request limits and Host validation", async () => {
+it("enforces account authentication, request limits and Host validation", async () => {
   app = createApp(store, new MockAIProvider(), {
-    accessToken: "test-workspace-token-24-characters",
+    accountEnv: {},
   });
   await request(app).get("/api/health").expect(200);
   await request(app).get("/api/sessions").expect(401);
   await request(app)
     .get("/api/sessions")
-    .set("Authorization", "Bearer test-workspace-token-24-characters")
-    .expect(200);
+    .set("Authorization", "Bearer obsolete-token")
+    .expect(401);
   await request(app)
     .get("/api/sessions")
     .set("Host", "attacker.example")
@@ -350,15 +350,10 @@ it("enforces a workspace gate, request limits and Host validation", async () => 
   const out = await request(app).get("/api/sessions").expect(429);
   expect(out.body.code).toBe("HTTP_RATE_LIMIT");
 });
-it("configuration requires an explicit local security mode and bounds configuration", () => {
-  expect(() => serverConfig({})).toThrow();
-  expect(serverConfig({ DEV_NO_AUTH: "true" }).AI_TIMEOUT_MS).toBe(60000);
-  expect(() =>
-    serverConfig({ DEV_NO_AUTH: "false", APP_ACCESS_TOKEN: "short" }),
-  ).toThrow();
-  expect(() =>
-    serverConfig({ DEV_NO_AUTH: "true", AI_TIMEOUT_MS: "NaN" }),
-  ).toThrow();
+it("configuration defaults to loopback and bounds configuration", () => {
+  expect(serverConfig({}).LISTEN_HOST).toBe("127.0.0.1");
+  expect(serverConfig({}).AI_TIMEOUT_MS).toBe(60000);
+  expect(() => serverConfig({ AI_TIMEOUT_MS: "NaN" })).toThrow();
 });
 it("supports abortable deterministic mock timeout fixtures", async () => {
   app = createApp(store, new MockAIProvider(), { timeoutMs: 20 });
