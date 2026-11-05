@@ -3,6 +3,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import type { Store } from "./db.js";
 import { fail } from "./sessions.js";
+import type { Profile } from "./accounts.js";
 
 const states = [
   "FREE",
@@ -56,13 +57,34 @@ export function billing(
     period: env.PREMIUM_BILLING_PERIOD?.trim() || null,
   };
   const checkoutEnabled = Boolean(gateway && plan.price && plan.period);
+  const testEmails = new Set(
+    (env.PREMIUM_TEST_EMAILS ?? "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  for (const email of testEmails) z.email().parse(email);
+  const testUntil = testEmails.size
+    ? z.iso.datetime().parse(env.PREMIUM_TEST_UNTIL)
+    : null;
+  const testAccess = (owner: string) => {
+    if (
+      !testUntil ||
+      Date.parse(testUntil) <= Date.now() ||
+      !owner.startsWith("google:")
+    )
+      return false;
+    const profile = store.get<Profile>("profile", owner, "tradzyn-auth");
+    return Boolean(profile && testEmails.has(profile.email.toLowerCase()));
+  };
   const get = (owner: string) =>
     store.get<Subscription>("subscription", "premium", owner);
   const active = (owner: string) => {
     const subscription = get(owner);
     return (
-      subscription?.status === "ACTIVE" &&
-      Date.parse(subscription.paidThrough ?? "") > Date.now()
+      testAccess(owner) ||
+      (subscription?.status === "ACTIVE" &&
+        Date.parse(subscription.paidThrough ?? "") > Date.now())
     );
   };
   const url = (value: string) => {
@@ -86,6 +108,8 @@ export function billing(
           ? "EXPIRED"
           : (subscription?.status ?? "FREE"),
       paidThrough: subscription?.paidThrough ?? null,
+      testAccess: testAccess(owner),
+      testAccessUntil: testAccess(owner) ? testUntil : null,
       demo: subscription?.demo ?? false,
       payments: store.all("payment", owner),
     });

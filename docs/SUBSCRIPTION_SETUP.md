@@ -1,5 +1,18 @@
 # Subscription setup
 
+## Temporary hosted testing
+
+To test the companion before configuring payments, set these backend environment variables on Render:
+
+```dotenv
+PREMIUM_TEST_EMAILS=your-google-email@example.com
+PREMIUM_TEST_UNTIL=2026-11-19T23:59:59Z
+```
+
+Use the actual Google email used to sign in. You can add multiple tester emails separated by commas. Save and deploy, sign in through Google, and open Settings to see the test-access expiry. The backend checks the verified account and expiry on companion requests. Test access expires automatically. Clear the email list and redeploy to revoke it early. Existing subscription and payment records are preserved.
+
+This option grants Premium after Google authentication. The Google callback must be configured before hosted sign-in can work. For testing without Google credentials, use the local demo seed described in AUTHENTICATION_SETUP.md.
+
 Free is the default. Premium requires status ACTIVE and a future paid-through date. The server checks this for companion endpoints. Session cleanup remains available to the record owner when entitlement ends. Pending, failed, expired and cancelled states cannot create or continue recording.
 
 Provide the gateway and merchant account, the approved plan price and currency, billing period, gateway product/price identifier, sandbox configuration and webhook secret. Set `PREMIUM_PRICE_LABEL` and `PREMIUM_BILLING_PERIOD` for display. These values do not set what a gateway charges.

@@ -16,6 +16,8 @@ type Identity = {
 };
 type Plan = { name: string; price: string | null; period: string | null };
 export type Subscription = {
+  testAccess?: boolean;
+  testAccessUntil?: string | null;
   plan: Plan;
   active: boolean;
   status: string;
@@ -339,10 +341,18 @@ export function AccountSettings({
           <>
             <p>
               Current plan: {subscription.active ? "Premium" : "Free"} ·{" "}
-              {subscription.status.replaceAll("_", " ")}
+              {subscription.testAccess
+                ? "TEST ACCESS"
+                : subscription.status.replaceAll("_", " ")}
             </p>
             {subscription.demo && (
               <p>Local demo entitlement. No payment was made.</p>
+            )}
+            {subscription.testAccess && (
+              <p className="notice">
+                Premium test access is enabled for your account until{" "}
+                {new Date(subscription.testAccessUntil!).toLocaleString()}.
+              </p>
             )}
             {subscription.paidThrough && (
               <p>
@@ -373,9 +383,11 @@ export function AccountSettings({
                 Manage subscription
               </button>
             )}
-            {!subscription.checkoutEnabled && !subscription.demo && (
-              <p>Checkout is awaiting payment provider configuration.</p>
-            )}
+            {!subscription.checkoutEnabled &&
+              !subscription.demo &&
+              !subscription.testAccess && (
+                <p>Checkout is awaiting payment provider configuration.</p>
+              )}
             <h4>Payment history</h4>
             {subscription.payments.length ? (
               <ul>

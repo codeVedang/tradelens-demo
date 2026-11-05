@@ -301,6 +301,68 @@ it("requires a verified payment, handles out-of-order retries, and locks expired
   await agent.post("/api/sessions").send({}).expect(403);
   await agent.get("/api/journal").expect(200);
 });
+it("grants temporary Premium only to named authenticated testers and expires it without changing billing records", async () => {
+  const expires = Date.now() + 86400_000;
+  const app = setup({
+    ...env,
+    NODE_ENV: "production",
+    PREMIUM_TEST_EMAILS: " TESTER@example.test ",
+    PREMIUM_TEST_UNTIL: new Date(expires).toISOString(),
+  });
+  const tester = await googleLogin(app, "tester");
+  const other = await googleLogin(app, "other");
+  await request(app)
+    .post("/api/sessions")
+    .send({ email: "tester@example.test" })
+    .expect(401);
+  await other
+    .post("/api/sessions")
+    .send({ email: "tester@example.test", testAccess: true })
+    .expect(403);
+  await tester
+    .get("/api/billing")
+    .expect(200)
+    .expect(({ body }) => {
+      expect(body).toMatchObject({
+        active: true,
+        testAccess: true,
+        status: "FREE",
+        payments: [],
+      });
+    });
+  const session = (await tester.post("/api/sessions").send({}).expect(201))
+    .body;
+  await tester
+    .post("/api/sessions/" + session.id + "/start")
+    .send({})
+    .expect(200);
+  expect(store.all("subscription", "google:tester")).toEqual([]);
+  vi.spyOn(Date, "now").mockReturnValue(expires + 1);
+  await tester
+    .get("/api/billing")
+    .expect(200)
+    .expect(({ body }) =>
+      expect(body).toMatchObject({ active: false, testAccess: false }),
+    );
+  await tester.post("/api/sessions").send({}).expect(403);
+  await tester
+    .post("/api/sessions/" + session.id + "/stop")
+    .send({})
+    .expect(200);
+  await tester.get("/api/journal").expect(200);
+});
+it("requires an explicit valid expiry when tester emails are configured", () => {
+  expect(() =>
+    setup({ ...env, PREMIUM_TEST_EMAILS: "tester@example.test" }),
+  ).toThrow();
+  expect(() =>
+    setup({
+      ...env,
+      PREMIUM_TEST_EMAILS: "*",
+      PREMIUM_TEST_UNTIL: "2026-11-19T23:59:59Z",
+    }),
+  ).toThrow();
+});
 it("falls back to labelled mock AI when no real key is configured", () => {
   expect(createProvider({ AI_PROVIDER: "openai" }).mode).toBe("mock");
 });
