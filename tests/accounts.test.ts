@@ -180,6 +180,68 @@ it("allows signed-in free users to manage journal entries and isolates data by o
   await a.delete("/api/journal/" + row.id).expect(204);
   await a.get("/api/journal").expect(200, []);
 });
+it("groups daily results and exports only the signed-in user's matching journal entries", async () => {
+  const app = setup();
+  const a = await googleLogin(app, "exporter");
+  const b = await googleLogin(app, "another");
+  await request(app).get("/api/journal/export").expect(401);
+  await a
+    .post("/api/journal")
+    .send({
+      date: "2026-10-30",
+      expected: "10",
+      real: "-1.25",
+      notes: '=SUM(1,2) "QA"\nsecond line',
+    })
+    .expect(201);
+  await a
+    .post("/api/journal")
+    .send({
+      date: "2026-10-30",
+      expected: "20",
+      real: "4.50",
+      notes: "Second entry",
+    })
+    .expect(201);
+  await a
+    .post("/api/journal")
+    .send({
+      date: "2026-10-31",
+      expected: "5",
+      real: "0",
+      notes: "Different day",
+    })
+    .expect(201);
+  await b
+    .post("/api/journal")
+    .send({
+      date: "2026-10-30",
+      expected: "10",
+      real: "10",
+      notes: "Other user's data",
+    })
+    .expect(201);
+  const analytics = await a.get("/api/journal/analytics").expect(200);
+  expect(analytics.body.trend[0]).toMatchObject({
+    date: "2026-10-30",
+    entryCount: 2,
+    expectedCents: 3000,
+    realCents: 325,
+    differenceCents: -2675,
+  });
+  const exported = await a
+    .get("/api/journal/export?from=2026-10-30&to=2026-10-30&q=QA")
+    .expect(200);
+  expect(exported.headers["content-disposition"]).toContain(
+    "tradzyn-journal.csv",
+  );
+  expect(exported.text).toContain(
+    '"2026-10-30","INR",10,-1.25,-11.25,"\'=SUM(1,2) ""QA""\nsecond line"',
+  );
+  expect(exported.text).not.toMatch(
+    /Other user's data|Second entry|Different day/,
+  );
+});
 it("seeds an isolated active demo account and rejects its cookies and password in production", async () => {
   const demo = seedDemo(store),
     agent = request.agent(setup());

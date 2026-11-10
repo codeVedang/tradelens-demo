@@ -3,6 +3,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import type { Store } from "./db.js";
 import { fail } from "./sessions.js";
+import { csv } from "./csv.js";
 
 export type JournalEntry = {
   id: string;
@@ -44,17 +45,31 @@ export function journal(
     store
       .all<JournalEntry>("journal", owner(req))
       .sort((a, b) => b.date.localeCompare(a.date));
+  const filteredEntries = (req: Request) => {
+    const { q, from, to } = filters.parse(req.query);
+    if (from && to && from > to) throw fail(400, "Date range is reversed");
+    return entries(req).filter(
+      (row) =>
+        (!from || row.date >= from) &&
+        (!to || row.date <= to) &&
+        (!q || row.notes.toLowerCase().includes(q.toLowerCase())),
+    );
+  };
   router.get("/analytics", (req, res) => {
     const rows = entries(req);
     const totals = empty(),
-      byDate = new Map<string, ReturnType<typeof empty>>();
+      byDate = new Map<
+        string,
+        ReturnType<typeof empty> & { entryCount: number }
+      >();
     let positive = 0,
       negative = 0,
       flat = 0;
     for (const row of rows) {
       add(totals, row);
-      const day = byDate.get(row.date) ?? empty();
+      const day = byDate.get(row.date) ?? { ...empty(), entryCount: 0 };
       add(day, row);
+      day.entryCount++;
       byDate.set(row.date, day);
       if (row.realCents > 0) positive++;
       else if (row.realCents < 0) negative++;
@@ -73,17 +88,32 @@ export function journal(
       recent: rows.slice(0, 5),
     });
   });
-  router.get("/", (req, res) => {
-    const { q, from, to } = filters.parse(req.query);
-    if (from && to && from > to) throw fail(400, "Date range is reversed");
-    res.json(
-      entries(req).filter(
-        (row) =>
-          (!from || row.date >= from) &&
-          (!to || row.date <= to) &&
-          (!q || row.notes.toLowerCase().includes(q.toLowerCase())),
-      ),
-    );
+  router.get("/", (req, res) => res.json(filteredEntries(req)));
+  router.get("/export", (req, res) => {
+    const rows = filteredEntries(req);
+    res
+      .attachment("tradzyn-journal.csv")
+      .type("text/csv")
+      .send(
+        csv([
+          [
+            "Date",
+            "Currency",
+            "Expected P&L",
+            "Real P&L",
+            "Difference (real minus expected)",
+            "Notes",
+          ],
+          ...rows.map((row) => [
+            row.date,
+            currency,
+            row.expectedCents / 100,
+            row.realCents / 100,
+            (row.realCents - row.expectedCents) / 100,
+            row.notes,
+          ]),
+        ]),
+      );
   });
   const save = (req: Request, id: string, action: string) => {
     const { date, notes, expected, real } = input.parse(req.body);

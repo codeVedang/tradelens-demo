@@ -7,6 +7,7 @@ import {
   fireEvent,
   waitFor,
   cleanup,
+  act,
 } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import App from "../src/App";
@@ -204,6 +205,64 @@ it("runs a mocked browser capture through live observations, pause/resume, repor
   expect(
     screen.getByText("No findings match this filter."),
   ).toBeInTheDocument();
+});
+it("holds a late finding during pause and ends sharing while the report is pending", async () => {
+  const svc = service();
+  let finishFrame!: () => void;
+  let finishStop!: () => void;
+  const framePending = new Promise<void>((resolve) => {
+    finishFrame = resolve;
+  });
+  const stopPending = new Promise<void>((resolve) => {
+    finishStop = resolve;
+  });
+  vi.stubGlobal("fetch", async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/frames")) await framePending;
+    if (url.endsWith("/stop")) await stopPending;
+    if (url.endsWith("/processing"))
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({ error: "Unavailable" }),
+      };
+    return svc.fetcher(url, options);
+  });
+  vi.spyOn(Capture.prototype, "request").mockResolvedValue({} as MediaStream);
+  vi.spyOn(Capture.prototype, "begin").mockImplementation(
+    async (_interval, send) => {
+      void send("data:image/jpeg;base64,/9j/2Q==", 0, {
+        frameId: "frame-1",
+        capturedCount: 1,
+      });
+    },
+  );
+  const stopCapture = vi
+    .spyOn(Capture.prototype, "stop")
+    .mockResolvedValue(undefined);
+  render(<App />);
+  await screen.findAllByText("MOCK MODE");
+  fireEvent.click(screen.getByRole("button", { name: "Live coach" }));
+  fireEvent.click(screen.getAllByRole("checkbox")[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  await screen.findByText(/AI status: Analyzing frame/);
+  fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+  await act(async () => finishFrame());
+  expect(screen.queryByText("SIMULATED: Review checklist")).toBeNull();
+  expect(screen.getByText(/AI status: Paused/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+  await screen.findByText("SIMULATED: Review checklist");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Stop & generate report" }),
+  );
+  expect(stopCapture).toHaveBeenCalledOnce();
+  expect(screen.queryByText("Screen sharing active")).toBeNull();
+  expect(
+    screen.getByText(/Screen sharing ended. Preparing your report/),
+  ).toBeVisible();
+  await act(async () => finishStop());
+  await screen.findByText("Suggested improvements");
+  expect(screen.getByRole("button", { name: "Export JSON" })).toBeEnabled();
+  expect(screen.getByText(/Your report was saved/)).toBeVisible();
 });
 it("persists both intervals via settings and rejects no UI state on success", async () => {
   const svc = service();

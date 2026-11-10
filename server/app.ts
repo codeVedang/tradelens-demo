@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Store } from "./db.js";
 import { type AIProvider } from "./providers.js";
+import { csv } from "./csv.js";
 import { Frames } from "./frames.js";
 import { Sessions, fail } from "./sessions.js";
 import { ruleSchema, settingsSchema, type Session } from "../shared/schema.js";
@@ -210,18 +211,12 @@ export function createApp(
   };
   app.get("/api/config/status", (req, res) =>
     res.json({
-      provider: provider.mode,
       deploymentMode: options.hostedDemo ? "hosted_demo" : "local",
       ephemeralStorage: options.ephemeralStorage ?? false,
       privacyNotice: options.hostedDemo
         ? "Hosted demo uses simulated processing. Use synthetic screens only."
         : null,
-      model: provider.model ?? null,
       simulated: provider.mode === "mock",
-      credentialsConfigured: provider.configured ?? provider.mode === "mock",
-      connectionStatus: "unverified",
-      authentication: account ? "account cookie" : "test fixture",
-      requestBudget: options.budget ?? 100,
       timeoutMs: options.timeoutMs ?? 60000,
       ...sessions.settings(owner(req)),
     }),
@@ -452,11 +447,6 @@ export function createApp(
     );
     sessions.audit("report.exported", report.id, owner(req));
     if (format === "json") return res.json(report);
-    const cell = (v: unknown) => {
-      let value = String(v ?? "");
-      if (/^[\s]*[=+\-@\t\r]/.test(value)) value = "'" + value;
-      return '"' + value.replaceAll('"', '""') + '"';
-    };
     const rows = [
       [
         "session_id",
@@ -489,9 +479,7 @@ export function createApp(
           e.completedAfterStop,
         ]),
     ];
-    res
-      .type("text/csv")
-      .send("\uFEFF" + rows.map((row) => row.map(cell).join(",")).join("\r\n"));
+    res.type("text/csv").send(csv(rows));
   });
   if (!account) {
     app.get("/api/rules", (req, res) => res.json(sessions.rules(owner(req))));

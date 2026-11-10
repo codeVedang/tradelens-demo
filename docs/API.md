@@ -11,6 +11,7 @@ Use same-origin requests. Authenticated requests carry the HttpOnly session cook
 | POST | /api/auth/demo | Enabled only in local nonproduction demo mode |
 | POST | /api/auth/logout | Revoke cookie session |
 | GET, POST | /api/journal | Filtered list and create |
+| GET | /api/journal/export | Download own journal as CSV using the same search and date filters |
 | PUT, DELETE | /api/journal/:id | Edit or delete own entry |
 | GET | /api/journal/analytics | Backend totals, daily trends, outcomes and recent entries |
 | GET | /api/billing | Own status, paid-through date and payment history |

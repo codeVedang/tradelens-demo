@@ -254,7 +254,11 @@ describe("providers", () => {
       .post(`/api/sessions/${id}/frames`)
       .send(frame())
       .expect(502);
-    expect(result.body.error).toContain("API key (401)");
+    expect(result.body.code).toBe("AI_AUTH");
+    expect(result.body.error).toContain(
+      "AI analysis is temporarily unavailable",
+    );
+    expect(result.body.error).not.toMatch(/OpenAI|API key|\.env/);
     expect(result.body.error).not.toContain("private credential fragment");
     expect(
       (await request(app).get(`/api/sessions/${id}/events`)).body,

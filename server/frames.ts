@@ -239,7 +239,7 @@ export class Frames {
         (error as any)?.status === 504
           ? (error as Error & { status: number })
           : this.provider.mode === "openai"
-            ? providerFailure(error)
+            ? providerFailure(error, "user")
             : fail(
                 502,
                 "Simulated analysis failure. Try the normal scenario.",

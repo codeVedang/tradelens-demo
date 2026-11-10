@@ -7,7 +7,6 @@ export class Capture {
   busy = false;
   paused = false;
   started = 0;
-  pending?: Promise<void>;
   chunks: Blob[] = [];
   bytes = 0;
   capturedCount = 0;
@@ -80,7 +79,12 @@ export class Capture {
     this.video.srcObject = this.stream;
     this.video.muted = true;
     this.video.playsInline = true;
-    await this.video.play();
+    try {
+      await this.video.play();
+    } catch (error) {
+      if (this.running) throw error;
+      return;
+    }
     if (!this.running) return;
     if (saveVideo && typeof MediaRecorder === "undefined")
       onError(
@@ -104,6 +108,7 @@ export class Capture {
         this.recorder.onerror = () =>
           onError("Local video recording failed; frame coaching continues.");
         this.recorder.start(1000);
+        if (this.paused) this.recorder.pause();
       } catch {
         onError(
           "Video recording is unavailable. Screen frame analysis is still active.",
@@ -148,7 +153,7 @@ export class Capture {
       this.latest = undefined;
       this.busy = true;
       this.lastSent = Date.now();
-      this.pending = (async () => {
+      void (async () => {
         try {
           await send(selected.image, selected.seconds, selected.meta);
         } catch (error) {
@@ -179,48 +184,50 @@ export class Capture {
     this.running = false;
     clearInterval(this.timer);
     this.latest = undefined;
-    this.stream?.getTracks().forEach((t) => t.stop());
+    const stream = this.stream;
+    this.stream = undefined;
+    if (this.ended)
+      stream?.getVideoTracks()[0]?.removeEventListener?.("ended", this.ended);
+    stream?.getTracks().forEach((track) => track.stop());
+    if (this.video) {
+      this.video.pause();
+      this.video.srcObject = null;
+      this.video = undefined;
+    }
   }
   stop(): Promise<Blob | undefined> {
     if (this.stopped) return this.stopped;
-    this.running = false;
-    clearInterval(this.timer);
-    this.latest = undefined;
     this.onEnded = undefined;
-    if (this.ended)
-      this.stream
-        ?.getVideoTracks()[0]
-        ?.removeEventListener?.("ended", this.ended);
+    const recorder = this.recorder;
+    const flush =
+      recorder && recorder.state !== "inactive"
+        ? new Promise<void>((resolve) => {
+            const finish = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+            const timer = setTimeout(finish, 1500);
+            recorder.onstop = finish;
+            try {
+              recorder.stop();
+            } catch {
+              finish();
+            }
+          })
+        : Promise.resolve();
+    this.cancel();
     this.stopped = (async () => {
-      if (this.recorder && this.recorder.state !== "inactive")
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 1500);
-          this.recorder!.onstop = () => {
-            clearTimeout(timer);
-            resolve();
-          };
-          try {
-            this.recorder!.stop();
-          } catch {
-            clearTimeout(timer);
-            resolve();
-          }
-        });
-      this.stream?.getTracks().forEach((t) => t.stop());
-      this.video?.pause();
-      if (this.video) this.video.srcObject = null;
-      this.stream = undefined;
-      await this.pending;
+      await flush;
       const blob = this.chunks.length
         ? new Blob(this.chunks, {
-            type: this.recorder?.mimeType || "video/webm",
+            type: recorder?.mimeType || "video/webm",
           })
         : undefined;
       this.chunks = [];
-      if (this.recorder) {
-        this.recorder.ondataavailable = null;
-        this.recorder.onerror = null;
-        this.recorder.onstop = null;
+      if (recorder) {
+        recorder.ondataavailable = null;
+        recorder.onerror = null;
+        recorder.onstop = null;
       }
       return blob;
     })();

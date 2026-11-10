@@ -72,6 +72,7 @@ export default function App({
     [report, setReport] = useState<any>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
+    [finalizing, setFinalizing] = useState(false),
     [loading, setLoading] = useState(true),
     [elapsed, setElapsed] = useState(0),
     [paused, setPaused] = useState(false),
@@ -82,6 +83,7 @@ export default function App({
     [videoUrl, setVideoUrl] = useState(""),
     [notes, setNotes] = useState("");
   const [captured, setCaptured] = useState(0),
+    [analyzed, setAnalyzed] = useState(0),
     [lastLatency, setLastLatency] = useState<number | null>(null),
     [processing, setProcessing] = useState<any[]>([]),
     [videoSession, setVideoSession] = useState(""),
@@ -91,6 +93,7 @@ export default function App({
     stoppingRef = useRef(false),
     stopPromise = useRef<Promise<void> | undefined>(undefined),
     failureCount = useRef(0);
+  const pausedResult = useRef<(() => void) | undefined>(undefined);
   const capture = useRef<Capture | undefined>(undefined),
     activeRef = useRef<Session | undefined>(undefined),
     stopRef = useRef<(reason?: "user" | "capture_ended") => Promise<void>>(
@@ -168,7 +171,10 @@ export default function App({
         { timeoutMs: 15000 },
       ).catch((e) => {
         setError(e.message);
-        if (e instanceof ApiError && ["PREMIUM_REQUIRED", "AUTH_REQUIRED"].includes(e.code ?? ""))
+        if (
+          e instanceof ApiError &&
+          ["PREMIUM_REQUIRED", "AUTH_REQUIRED"].includes(e.code ?? "")
+        )
           void stopRef.current();
       });
     }, 10000);
@@ -187,10 +193,12 @@ export default function App({
   }, [active]);
   useEffect(() => {
     if (preview.current && capture.current?.stream) {
-      preview.current.srcObject = capture.current.stream;
-      void preview.current.play().catch(() => {});
+      if (preview.current.srcObject !== capture.current.stream)
+        preview.current.srcObject = capture.current.stream;
+      if (paused) preview.current.pause();
+      else void preview.current.play().catch(() => {});
     }
-  }, [page, active]);
+  }, [page, active, paused]);
   const run = async (fn: () => Promise<void>) => {
     setError("");
     setBusy(true);
@@ -203,6 +211,7 @@ export default function App({
     }
   };
   const openSession = async (s: Session) => {
+    if (stoppingRef.current) return;
     if (activeRef.current && activeRef.current.id !== s.id)
       throw new Error(
         "Stop the active recording before opening another session.",
@@ -241,45 +250,77 @@ export default function App({
     const s = activeRef.current;
     if (!s) return;
     stoppingRef.current = true;
+    openSequence.current++;
+    pausedResult.current = undefined;
+    const engine = capture.current;
+    const capturedCount = engine?.capturedCount ?? 0;
+    const hadPendingFrame = engine?.busy ?? false;
+    activeRef.current = undefined;
+    setActive(undefined);
+    setPaused(false);
+    setFinalizing(true);
+    setError("");
+    setNotice("");
+    setSelected(s);
+    setNotes(s.notes);
+    setReport(undefined);
+    setEvents([]);
+    setProcessing([]);
+    setAnalysis("Idle");
+    setPage("Session reports");
+    const video = engine
+      ?.stop()
+      .then((blob) => {
+        if (!blob) return;
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = URL.createObjectURL(blob);
+        setVideoUrl(urlRef.current);
+        setVideoSession(s.id);
+      })
+      .catch(() => setNotice("The local video could not be saved."));
+    if (hadPendingFrame)
+      setNotice(
+        "The report includes any frame the server was already analyzing.",
+      );
     const work = (async () => {
-      setBusy(true);
-      setAnalysis("Finalizing report…");
       try {
-        const [blob, r] = await Promise.all([
-          capture.current?.stop(),
-          api(`/sessions/${s.id}/stop`, "POST", {
-            reason,
-            capturedCount: capture.current?.capturedCount ?? 0,
-          }),
-        ]);
-        if (blob) {
-          URL.revokeObjectURL(urlRef.current);
-          urlRef.current = URL.createObjectURL(blob);
-          setVideoUrl(urlRef.current);
-          setVideoSession(s.id);
-        }
+        const r = await api(
+          `/sessions/${s.id}/stop`,
+          "POST",
+          { reason, capturedCount },
+          { retryTransport: true },
+        );
         setReport(r);
-        setSelected({ ...s, status: "stopped" });
+        const stopped = { ...s, status: "stopped" as const };
+        setSelected(stopped);
+        setSessions((list) =>
+          list.map((item) => (item.id === s.id ? stopped : item)),
+        );
         setNotes(r.notes);
-        setEvents(await api(`/sessions/${s.id}/events`));
-        setProcessing(await api(`/sessions/${s.id}/processing`));
-        activeRef.current = undefined;
-        setActive(undefined);
-        setPaused(false);
-        setAnalysis("Idle");
-        setPage("Session reports");
-        await refresh();
+        const [findings, trace, listing] = await Promise.allSettled([
+          api(`/sessions/${s.id}/events`),
+          api(`/sessions/${s.id}/processing`),
+          refresh(),
+        ]);
+        if (findings.status === "fulfilled") setEvents(findings.value);
+        if (trace.status === "fulfilled") setProcessing(trace.value);
+        if (
+          [findings, trace, listing].some(
+            (result) => result.status === "rejected",
+          )
+        )
+          setNotice(
+            "Your report was saved. Reopen the session to reload any missing details.",
+          );
       } catch (e) {
-        setError("Could not finalize session: " + (e as Error).message);
-        setSelected(s);
-        setReport(undefined);
-        setPage("Session reports");
+        setError(
+          "Screen sharing ended. Retry report finalization: " +
+            (e as Error).message,
+        );
       } finally {
-        capture.current?.cancel();
-        activeRef.current = undefined;
-        setActive(undefined);
+        await video;
+        setFinalizing(false);
         stoppingRef.current = false;
-        setBusy(false);
       }
     })();
     stopPromise.current = work;
@@ -291,7 +332,14 @@ export default function App({
   };
   stopRef.current = stop;
   const start = () => {
-    if (!premium || !consent || starting.current || activeRef.current) return;
+    if (
+      !premium ||
+      !consent ||
+      starting.current ||
+      stoppingRef.current ||
+      activeRef.current
+    )
+      return;
     starting.current = true;
     setCaptureError("");
     void run(async () => {
@@ -314,6 +362,8 @@ export default function App({
         setVideoUrl("");
         setVideoSession("");
         setCaptured(0);
+        setAnalyzed(0);
+        setAnalysis("Waiting for the first frame…");
         setLastLatency(null);
         setProcessing([]);
         setNotice("");
@@ -329,6 +379,11 @@ export default function App({
           throw new Error("Screen sharing ended during session setup.");
         activeRef.current = s;
         setActive(s);
+        const startedSession = s!;
+        setSessions((list) => [
+          startedSession,
+          ...list.filter((item) => item.id !== startedSession.id),
+        ]);
         setConsent(false);
         setSelected(s);
         setEvents([]);
@@ -360,21 +415,34 @@ export default function App({
                 return;
               failureCount.current = 0;
               setError("");
-              setEvents((old) => [
-                ...old,
-                ...result.observations.filter(
-                  (e: any) => !old.some((existing) => existing.id === e.id),
-                ),
-              ]);
-              setLastLatency(result.processing?.latencyMs ?? null);
-              setAnalysis(
-                result.observations.length
-                  ? "Frame analyzed"
-                  : "Frame analyzed · no findings",
-              );
-              await refresh();
+              const showResult = () => {
+                setEvents((old) => [
+                  ...old,
+                  ...result.observations.filter(
+                    (e: any) => !old.some((existing) => existing.id === e.id),
+                  ),
+                ]);
+                setAnalyzed((count) => count + 1);
+                setLastLatency(result.processing?.latencyMs ?? null);
+                setAnalysis(
+                  result.observations.length
+                    ? "Frame analyzed"
+                    : "Frame analyzed · no findings",
+                );
+              };
+              if (engine.paused) {
+                pausedResult.current = showResult;
+                setAnalysis("Last frame ready");
+              } else showResult();
             } catch (e) {
               if (engine.signal.aborted || stoppingRef.current) return;
+              if (
+                e instanceof ApiError &&
+                ["ANALYSIS_INTERVAL", "ANALYSIS_BUSY"].includes(e.code ?? "")
+              ) {
+                setAnalysis("Waiting for the next frame");
+                return;
+              }
               setCaptureError((e as Error).message);
               if (
                 e instanceof ApiError &&
@@ -468,8 +536,7 @@ export default function App({
           </p>
           <p className="muted">
             Assessment:{" "}
-            {e.assessment?.replaceAll("_", " ") ?? "awaiting confirmation"} ·{" "}
-            {e.model ?? e.provider ?? "legacy provider"}
+            {e.assessment?.replaceAll("_", " ") ?? "awaiting confirmation"}
             {e.latencyMs != null
               ? ` · ${(e.latencyMs / 1000).toFixed(1)}s processing`
               : ""}
@@ -599,19 +666,19 @@ export default function App({
             <span className="badge mock">
               {!config
                 ? "CONNECTING"
-                : config.provider === "openai"
-                  ? "OPENAI"
+                : !config.simulated
+                  ? "LIVE ANALYSIS"
                   : "MOCK MODE"}
             </span>
             <p>
-              {config?.provider === "openai"
-                ? "Frames sent to OpenAI"
+              {config && !config.simulated
+                ? "AI coaching is active"
                 : "Practice the workflow safely"}
             </p>
             <small>
-              {config?.provider === "openai"
+              {config && !config.simulated
                 ? "Live integration · verify all findings"
-                : "Simulated coaching. No API key needed."}
+                : "Simulated coaching for practice."}
             </small>
             <button onClick={() => setPage("Settings")}>
               Manage settings <ArrowUpRight size={14} />
@@ -778,7 +845,9 @@ export default function App({
                             currentSession?.attempts ??
                             0),
                     ),
-                    `${currentSession?.frames ?? 0} analyzed · ${currentSession?.failedFrames ?? 0} failed`,
+                    active
+                      ? `${analyzed} analyzed`
+                      : `${currentSession?.frames ?? 0} analyzed · ${currentSession?.failedFrames ?? 0} failed`,
                   ],
                   [
                     Activity,
@@ -809,8 +878,11 @@ export default function App({
           )}
           {active && page !== "Live coach" && (
             <div className="notice live-status" role="status">
-              <span className="dot green" /> Screen sharing active ·{" "}
-              {duration(elapsed)}
+              <span className="dot green" />{" "}
+              {paused
+                ? "Capture paused · screen still shared"
+                : "Screen sharing active"}{" "}
+              · {duration(elapsed)}
               <button className="danger" onClick={() => void stopRef.current()}>
                 Stop recording
               </button>
@@ -833,7 +905,6 @@ export default function App({
                     <video
                       ref={preview}
                       muted
-                      autoPlay
                       playsInline
                       aria-label="Shared screen preview"
                     />
@@ -892,8 +963,8 @@ export default function App({
                         {config?.simulated
                           ? config?.deploymentMode === "hosted_demo"
                             ? "will be sent to the demo server for simulated processing"
-                            : "are processed by the local mock provider"
-                          : "will be sent to OpenAI"}
+                            : "are processed locally for this demo"
+                          : "will be sent to the AI service for analysis"}
                         . Screens may contain private account information.
                       </label>
                       <label className="check">
@@ -926,7 +997,7 @@ export default function App({
                       )}
                       <button
                         className="primary"
-                        disabled={!consent || busy || !config}
+                        disabled={!consent || busy || finalizing || !config}
                         onClick={start}
                       >
                         <Play size={16} />
@@ -938,25 +1009,35 @@ export default function App({
                       <div className="live-status">
                         <span className="dot green" />
                         {paused
-                          ? "Screen shared · analysis paused"
+                          ? "Capture paused · screen still shared"
                           : "Screen sharing active"}
-                        <strong>{duration(elapsed)}</strong>
+                        <strong aria-label="Elapsed session time">
+                          {duration(elapsed)}
+                        </strong>
                       </div>
                       <p className="muted">
-                        AI status: {analysis} · {active.intervalSeconds}s
-                        interval ·{" "}
-                        {config?.provider === "mock"
+                        AI status: {paused ? "Paused" : analysis} ·{" "}
+                        {active.intervalSeconds}s interval ·{" "}
+                        {config?.simulated
                           ? "MOCK · SIMULATED"
-                          : "OpenAI"}
+                          : "Live analysis"}
                       </p>
                       <p className="muted">
-                        {captured} frames captured ·{" "}
-                        {currentSession?.frames ?? 0} analyzed
+                        {captured} frames captured · {analyzed} analyzed
                         {lastLatency !== null
                           ? ` · Last analysis ${(lastLatency / 1000).toFixed(1)}s`
                           : ""}
                         . Busy intervals are skipped.
                       </p>
+                      {paused && (
+                        <p role="status" className="muted">
+                          Preview and frame capture are paused.{" "}
+                          {analysis === "Analyzing frame…" ||
+                          pausedResult.current
+                            ? "The last submitted frame will appear when you resume or open the report."
+                            : "Resume to capture new frames."}
+                        </p>
+                      )}
                       {analysis === "Analysis failed" && error && (
                         <p className="notice" aria-live="polite">
                           {error}
@@ -964,9 +1045,13 @@ export default function App({
                       )}
                       <div className="actions">
                         <button
-                          disabled={busy}
                           onClick={() => {
-                            setPaused(capture.current!.pause());
+                            const isPaused = capture.current!.pause();
+                            setPaused(isPaused);
+                            if (!isPaused) {
+                              pausedResult.current?.();
+                              pausedResult.current = undefined;
+                            }
                             setNotice("");
                             failureCount.current = 0;
                           }}
@@ -974,11 +1059,7 @@ export default function App({
                           <Pause size={15} />
                           {paused ? "Resume" : "Pause"}
                         </button>
-                        <button
-                          className="danger"
-                          disabled={busy}
-                          onClick={() => void stop()}
-                        >
+                        <button className="danger" onClick={() => void stop()}>
                           <Square size={14} />
                           Stop & generate report
                         </button>
@@ -1099,7 +1180,7 @@ export default function App({
                         ? "CONNECTING"
                         : config.simulated
                           ? "MOCK MODE"
-                          : "OPENAI MODE"}
+                          : "LIVE ANALYSIS"}
                     </span>
                   </div>
                   {events.length ? (
@@ -1266,6 +1347,10 @@ export default function App({
                       ))}
                       <p className="notice">{report.limitations.join(" ")}</p>
                     </>
+                  ) : finalizing ? (
+                    <p className="notice" role="status">
+                      Screen sharing ended. Preparing your report…
+                    </p>
                   ) : (
                     <div className="notice">
                       <p>
@@ -1304,13 +1389,14 @@ export default function App({
                     Session notes
                     <textarea
                       value={notes}
+                      disabled={finalizing}
                       onChange={(e) => setNotes(e.target.value)}
                       placeholder="Add context, corrections, or your next-session intention…"
                     />
                   </label>
                   <button
                     className="small"
-                    disabled={busy}
+                    disabled={busy || finalizing}
                     onClick={() =>
                       void run(async () => {
                         await api(`/sessions/${selected.id}`, "PATCH", {
@@ -1470,14 +1556,12 @@ export default function App({
               <section className="panel settings">
                 <h3>Analysis preferences</h3>
                 <span className="badge mock">
-                  {config.simulated
-                    ? "MOCK · SIMULATED"
-                    : "OPENAI · LIVE REQUESTS"}
+                  {config.simulated ? "MOCK · SIMULATED" : "LIVE ANALYSIS"}
                 </span>
                 <p>
                   {config.simulated
-                    ? "No API key required. Mock observations are deterministic scenarios, not screen analysis."
-                    : "Screenshots are sent to the configured OpenAI model. Live accuracy has not been certified; review all findings."}
+                    ? "Demo observations are simulated."
+                    : "Review AI observations before relying on them."}
                 </p>
                 <form
                   onSubmit={(e) => {
@@ -1564,30 +1648,6 @@ export default function App({
                 </p>
               </section>
               <section className="panel settings">
-                <h3>Connect OpenAI</h3>
-                <p>
-                  Configured model: {config.model ?? "mock fixture"} ·
-                  Connection: {config.connectionStatus}. Key presence is not
-                  proof of validity. Request budget:{" "}
-                  {config.requestBudget ?? 100} per session.
-                </p>
-                <p>
-                  In your backend <code>.env</code>, set:
-                </p>
-                <pre>
-                  AI_PROVIDER=openai{"\n"}OPENAI_API_KEY=your-key{"\n"}
-                  OPENAI_MODEL=your-supported-vision-model
-                </pre>
-                <p>
-                  Restart the backend after editing. Keep the key exclusively on
-                  the server. Never use a VITE_ variable for secrets.
-                </p>
-                <p>
-                  For an explicit connection test, run{" "}
-                  <code>npm.cmd run ai:check -- --allow-paid</code> in the
-                  backend terminal. It sends one synthetic image and may incur
-                  charges. No automatic connectivity tests run.
-                </p>
                 <h3>Privacy & consent</h3>
                 <p>
                   Capture starts only after you click Start recording and choose
@@ -1596,9 +1656,8 @@ export default function App({
                   information.
                 </p>
                 <p>
-                  In OpenAI mode, selected screenshots leave your device.
-                  Provider retention policies apply even though this app
-                  requests no response storage.
+                  During live analysis, selected screenshots are sent to an AI
+                  service. The service may retain data under its privacy policy.
                 </p>
               </section>
             </div>

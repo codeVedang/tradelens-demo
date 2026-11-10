@@ -1,6 +1,9 @@
 // Translate only recognized error fields. Never return raw provider messages,
 // which may contain credential fragments or submitted screen information.
-export function providerFailure(error: unknown): Error & { status: number } {
+export function providerFailure(
+  error: unknown,
+  audience: "operator" | "user" = "operator",
+): Error & { status: number } {
   const detail = error as {
     status?: number;
     code?: string;
@@ -59,6 +62,12 @@ export function providerFailure(error: unknown): Error & { status: number } {
           : detail?.status === 429
             ? "AI_RATE_LIMIT"
             : "AI_FAILURE";
+  if (audience === "user") {
+    message =
+      code === "AI_RATE_LIMIT"
+        ? "AI analysis is busy. Try again shortly or increase the analysis interval in Settings."
+        : "AI analysis is temporarily unavailable. Try again later. If it continues, contact the workspace operator.";
+  }
   return Object.assign(new Error(message), {
     status: 502,
     code,

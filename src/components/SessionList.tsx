@@ -116,7 +116,7 @@ export default function SessionList({
                   <td>{new Date(s.createdAt).toLocaleString()}</td>
                   <td>
                     <span className="badge mock">
-                      {s.mode === "mock" ? "MOCK" : "OPENAI"}
+                      {s.mode === "mock" ? "MOCK" : "LIVE AI"}
                     </span>
                   </td>
                   <td>{s.frames}</td>

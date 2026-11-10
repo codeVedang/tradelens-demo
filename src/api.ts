@@ -74,7 +74,16 @@ export async function api<T = any>(
   throw new Error("Request failed");
 }
 export async function exportReport(id: string, format: "json" | "csv") {
-  const response = await fetch(`/api/sessions/${id}/export?format=${format}`);
+  await download(
+    `/api/sessions/${id}/export?format=${format}`,
+    `session-${id}.${format}`,
+  );
+}
+export async function exportJournal(filters: URLSearchParams) {
+  await download("/api/journal/export?" + filters, "tradzyn-journal.csv");
+}
+async function download(path: string, filename: string) {
+  const response = await fetch(path);
   if (!response.ok) {
     const error = await response
       .json()
@@ -85,7 +94,7 @@ export async function exportReport(id: string, format: "json" | "csv") {
     url = URL.createObjectURL(blob),
     link = document.createElement("a");
   link.href = url;
-  link.download = `session-${id}.${format}`;
+  link.download = filename;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

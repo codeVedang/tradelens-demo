@@ -162,6 +162,33 @@
 .journal-list .actions {
   margin-top: 0;
 }
+.pnl-profit {
+  color: #50d49b;
+}
+.pnl-loss {
+  color: #ff7583;
+}
+.pnl-flat {
+  color: #a8a8b3;
+}
+.pnl-expected {
+  color: #9ebaff;
+}
+.pnl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.daily-pnl-table {
+  margin-top: 12px;
+  max-height: 320px;
+}
+.daily-pnl-table th {
+  position: sticky;
+  top: 0;
+}
 .capture-diagnostics {
   margin: 0 0 16px;
 }

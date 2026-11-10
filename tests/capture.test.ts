@@ -81,19 +81,53 @@ it("captures periodically with a one-frame latest queue, no overlapping sends an
   expect(track.removeEventListener).toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+it("releases sharing immediately even with an unfinished upload and optional recording", async () => {
+  const track = browser();
+  class Recorder {
+    state = "inactive";
+    mimeType = "video/webm";
+    onstop?: () => void;
+    start() {
+      this.state = "recording";
+    }
+    stop() {
+      this.state = "inactive";
+    }
+  }
+  vi.stubGlobal("MediaRecorder", Recorder);
+  const capture = new Capture();
+  await capture.request();
+  const send = vi.fn(() => new Promise<void>(() => {}));
+  await capture.begin(5, send, true, vi.fn());
+  expect(send).toHaveBeenCalledOnce();
+  const stopped = capture.stop();
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(capture.signal.aborted).toBe(true);
+  expect(capture.stream).toBeUndefined();
+  expect(capture.stop()).toBe(stopped);
+  (capture.recorder as unknown as Recorder).onstop?.();
+  await stopped;
+  capture.cancel();
+  expect(track.stop).toHaveBeenCalledOnce();
+});
 it("keeps frame analysis and cleans up when the optional MediaRecorder fails", async () => {
   const track = browser();
-  vi.stubGlobal("MediaRecorder", class {
-    constructor() {
-      throw new Error("Recorder unavailable");
-    }
-  });
+  vi.stubGlobal(
+    "MediaRecorder",
+    class {
+      constructor() {
+        throw new Error("Recorder unavailable");
+      }
+    },
+  );
   const capture = new Capture();
   const send = vi.fn(async () => {});
   const error = vi.fn();
   await capture.request();
   await capture.begin(5, send, true, error);
-  expect(error).toHaveBeenCalledWith(expect.stringContaining("frame analysis is still active"));
+  expect(error).toHaveBeenCalledWith(
+    expect.stringContaining("frame analysis is still active"),
+  );
   expect(send).toHaveBeenCalledOnce();
   await expect(capture.stop()).resolves.toBeUndefined();
   expect(track.stop).toHaveBeenCalledOnce();
