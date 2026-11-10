@@ -13,6 +13,7 @@ type Identity = {
   profile: Profile | null;
   googleConfigured: boolean;
   demoEnabled: boolean;
+  demoMode: "local" | "hosted" | null;
 };
 type Plan = { name: string; price: string | null; period: string | null };
 export type Subscription = {
@@ -242,8 +243,9 @@ function Login({ identity }: { identity?: Identity }) {
             : "Welcome back"}
         </h1>
         <p>
-          Continue with your Google account to open your personal Tradzyn
-          workspace.
+          {identity?.demoMode === "hosted"
+            ? "Enter the demo credentials shared with you."
+            : "Continue with your Google account to open your personal Tradzyn workspace."}
         </p>
         {error && (
           <p role="alert" className="alert">
@@ -254,22 +256,28 @@ function Login({ identity }: { identity?: Identity }) {
           <a className="public-cta" href="/api/auth/google">
             Continue with Google
           </a>
-        ) : (
+        ) : identity?.demoMode !== "hosted" ? (
           <p>
             {identity
               ? "Google sign-in is awaiting owner configuration."
               : "Checking sign-in availability…"}
           </p>
-        )}
+        ) : null}
         {identity?.demoEnabled && (
           <form onSubmit={demoLogin}>
-            <h3>Local demo sign-in</h3>
+            <h3>
+              {identity.demoMode === "hosted"
+                ? "Demo sign-in"
+                : "Local demo sign-in"}
+            </h3>
             <label>
               Email
               <input
                 name="email"
                 type="email"
-                defaultValue="demo@tradzyn.local"
+                defaultValue={
+                  identity.demoMode === "hosted" ? "" : "demo@tradzyn.local"
+                }
                 autoComplete="username"
                 required
               />
@@ -283,7 +291,11 @@ function Login({ identity }: { identity?: Identity }) {
                 required
               />
             </label>
-            <button disabled={busy}>Sign in to local demo</button>
+            <button disabled={busy}>
+              {identity.demoMode === "hosted"
+                ? "Sign in to demo"
+                : "Sign in to local demo"}
+            </button>
           </form>
         )}
       </section>
@@ -346,7 +358,7 @@ export function AccountSettings({
                 : subscription.status.replaceAll("_", " ")}
             </p>
             {subscription.demo && (
-              <p>Local demo entitlement. No payment was made.</p>
+              <p>Demo Premium access. No payment was made.</p>
             )}
             {subscription.testAccess && (
               <p className="notice">
@@ -356,7 +368,7 @@ export function AccountSettings({
             )}
             {subscription.paidThrough && (
               <p>
-                Paid through:{" "}
+                {subscription.demo ? "Demo access until" : "Paid through"}:{" "}
                 {new Date(subscription.paidThrough).toLocaleDateString()}
               </p>
             )}

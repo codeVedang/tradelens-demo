@@ -8,7 +8,7 @@ Use same-origin requests. Authenticated requests carry the HttpOnly session cook
 | GET | /api/public/plan | Public Premium display metadata |
 | GET | /api/auth/me | Identity and available sign-in options |
 | GET | /api/auth/google and /api/auth/google/callback | Google authorization and callback |
-| POST | /api/auth/demo | Enabled only in local nonproduction demo mode |
+| POST | /api/auth/demo | Local seeded login or configured, expiring HTTPS hosted demo credentials |
 | POST | /api/auth/logout | Revoke cookie session |
 | GET, POST | /api/journal | Filtered list and create |
 | GET | /api/journal/export | Download own journal as CSV using the same search and date filters |

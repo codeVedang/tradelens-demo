@@ -18,7 +18,12 @@ export type Profile = {
   email: string;
   picture?: string;
 };
-type Login = { id: string; userId: string; expires: number };
+type Login = {
+  id: string;
+  userId: string;
+  expires: number;
+  demoCredential?: string;
+};
 type Attempt = {
   id: string;
   state: string;
@@ -32,6 +37,54 @@ const week = 7 * 86400_000;
 const random = () => randomBytes(32).toString("base64url");
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("base64url");
+const hostedDemoPrefix = "demo-hosted:";
+const hostedDemoId = (email: string) => hostedDemoPrefix + hash(email);
+const hostedDemoInput = z
+  .array(
+    z
+      .object({
+        email: z.email(),
+        password: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(10);
+type HostedDemo = { user: Profile; passwordHash: string; expires: number };
+
+function hostedDemoAccounts(env: NodeJS.ProcessEnv, secure: boolean) {
+  const accounts = new Map<string, HostedDemo>();
+  if (
+    !secure ||
+    env.DEPLOYMENT_MODE !== "hosted_demo" ||
+    (env.AI_PROVIDER ?? "mock") !== "mock" ||
+    !env.HOSTED_DEMO_ACCOUNTS?.trim()
+  )
+    return accounts;
+  try {
+    const entries = hostedDemoInput.parse(JSON.parse(env.HOSTED_DEMO_ACCOUNTS));
+    const expires = Date.parse(z.iso.datetime().parse(env.HOSTED_DEMO_UNTIL));
+    const passwords = new Set<string>();
+    for (const entry of entries) {
+      const email = entry.email.toLowerCase();
+      const id = hostedDemoId(email);
+      const passwordHash = hash(entry.password);
+      if (accounts.has(id) || passwords.has(passwordHash)) throw new Error();
+      passwords.add(passwordHash);
+      accounts.set(id, {
+        user: { id, email, name: "Tradzyn Demo" },
+        passwordHash,
+        expires,
+      });
+    }
+  } catch {
+    // Avoid including the credential JSON in startup errors.
+    throw new Error(
+      "Configure HOSTED_DEMO_ACCOUNTS with unique emails and generated passwords, and HOSTED_DEMO_UNTIL with a UTC expiry.",
+    );
+  }
+  return accounts;
+}
 const cookie = (req: Request, name: string) =>
   req.headers.cookie
     ?.split(/;\s*/)
@@ -109,6 +162,13 @@ export function accounts(store: Store, env: NodeJS.ProcessEnv, origin: string) {
   );
   const demo = demoAllowed(env, origin);
   const secure = origin.startsWith("https:");
+  const hostedDemos = hostedDemoAccounts(env, secure);
+  const demoMode = () =>
+    demo
+      ? "local"
+      : [...hostedDemos.values()].some((entry) => entry.expires > Date.now())
+        ? "hosted"
+        : null;
   const cookieOptions = {
     httpOnly: true,
     secure,
@@ -123,21 +183,52 @@ export function accounts(store: Store, env: NodeJS.ProcessEnv, origin: string) {
     const login = store.get<Login>("login", loginId(req), system);
     if (!login || login.expires <= Date.now()) return undefined;
     if (login.userId === "demo-local" && !demo) return undefined;
+    if (login.userId.startsWith(hostedDemoPrefix)) {
+      const entry = hostedDemos.get(login.userId);
+      if (
+        !entry ||
+        entry.expires <= Date.now() ||
+        entry.passwordHash !== login.demoCredential
+      )
+        return undefined;
+    }
     return store.get<Profile>("profile", login.userId, system);
   };
   const prune = (kind: "login" | "oauth_attempt") => {
     for (const item of store.all<Login | Attempt>(kind, system))
       if (item.expires <= Date.now()) store.delete(kind, item.id, system);
   };
-  const startSession = (req: Request, res: Response, user: Profile) => {
+  const startSession = (
+    req: Request,
+    res: Response,
+    user: Profile,
+    hosted?: HostedDemo,
+  ) => {
     const token = random();
+    const maxAge = hosted ? Math.min(week, hosted.expires - Date.now()) : week;
     store.transaction(() => {
       prune("login");
       store.delete("login", loginId(req), system);
       store.put("profile", user, system);
+      if (hosted)
+        store.put(
+          "subscription",
+          {
+            id: "premium",
+            status: "ACTIVE",
+            paidThrough: new Date(hosted.expires).toISOString(),
+            demo: true,
+          },
+          user.id,
+        );
       store.put(
         "login",
-        { id: hash(token), userId: user.id, expires: Date.now() + week },
+        {
+          id: hash(token),
+          userId: user.id,
+          expires: Date.now() + maxAge,
+          demoCredential: hosted?.passwordHash,
+        },
         system,
       );
       store.put(
@@ -150,13 +241,14 @@ export function accounts(store: Store, env: NodeJS.ProcessEnv, origin: string) {
         user.id,
       );
     });
-    res.cookie(sessionName, token, { ...cookieOptions, maxAge: week });
+    res.cookie(sessionName, token, { ...cookieOptions, maxAge });
   };
   router.get("/me", (req, res) =>
     res.json({
       profile: profile(req) ?? null,
       googleConfigured: configured,
-      demoEnabled: demo,
+      demoEnabled: demoMode() !== null,
+      demoMode: demoMode(),
     }),
   );
   router.use(
@@ -259,13 +351,30 @@ export function accounts(store: Store, env: NodeJS.ProcessEnv, origin: string) {
     }
   });
   router.post("/demo", (req, res) => {
-    if (!demo) throw fail(404, "Endpoint not found");
+    const mode = demoMode();
+    if (!mode) throw fail(404, "Endpoint not found");
     const body = z
       .object({
-        email: z.literal("demo@tradzyn.local"),
+        email: z.string().trim().toLowerCase().pipe(z.email()),
         password: z.string().min(1).max(256),
       })
       .parse(req.body);
+    if (mode === "hosted") {
+      const entry = hostedDemos.get(hostedDemoId(body.email));
+      if (
+        !entry ||
+        entry.expires <= Date.now() ||
+        !timingSafeEqual(
+          Buffer.from(hash(body.password)),
+          Buffer.from(entry.passwordHash),
+        )
+      )
+        throw fail(401, "Invalid demo credentials");
+      startSession(req, res, entry.user, entry);
+      return res.json({ profile: entry.user });
+    }
+    if (body.email !== "demo@tradzyn.local")
+      throw fail(401, "Invalid demo credentials");
     const credential = store.get<Demo>("demo_password", "demo-local", system);
     const user = store.get<Profile>("profile", "demo-local", system);
     if (
