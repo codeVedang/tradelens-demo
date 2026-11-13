@@ -10,6 +10,7 @@ import {
 import { Sessions, fail } from "./sessions.js";
 import { type AIProvider } from "./providers.js";
 import { providerFailure } from "./provider-errors.js";
+import { riskSuggestions } from "./risk-coach.js";
 export const frameSchema = z.object({
   frameId: z.string().uuid(),
   timestampSeconds: z.number().min(0).max(86400),
@@ -170,6 +171,7 @@ export class Frames {
           image: body.image,
           timestampSeconds: body.timestampSeconds,
           rules: this.sessions.snapshot(s, owner),
+          tradingPlan: s.tradingPlan,
           scenario: body.scenario,
           signal: controller.signal,
         }),
@@ -181,6 +183,11 @@ export class Frames {
         }),
       ]);
       const output = analysisSchema.parse(raw),
+        risk = riskSuggestions(
+          s.tradingPlan,
+          (raw as { riskReview?: unknown }).riskReview,
+          body.timestampSeconds,
+        ),
         current = this.sessions.get(s.id, owner),
         completedAt = new Date().toISOString(),
         latencyMs = Date.now() - Date.parse(frame.startedAt),
@@ -189,33 +196,37 @@ export class Frames {
         this.sessions.snapshot(s, owner).map((r) => r.id),
       );
       return this.sessions.store.transaction(() => {
-        const observations = output.observations.map((e) => {
-          const ruleId = e.ruleId && ruleIds.has(e.ruleId) ? e.ruleId : null;
-          const missing =
-            e.category === "insufficient_evidence" || e.kind === "unknown";
-          return this.sessions.store.put(
-            "event",
-            {
-              ...e,
-              ruleId,
-              assessment: missing ? "not_assessable" : e.assessment,
-              status: missing ? "insufficient_evidence" : "needs_confirmation",
-              timestampSeconds: body.timestampSeconds,
-              id: randomUUID(),
-              sessionId: s.id,
-              frameId: body.frameId,
-              simulated: this.provider.mode === "mock",
-              provider: this.provider.mode,
-              model: this.provider.model ?? null,
-              analyzedAt: completedAt,
-              latencyMs,
-              completedAfterStop: late,
-              history: [],
-              notes: "",
-            },
-            owner,
-          );
-        });
+        const observations = [...risk, ...output.observations]
+          .slice(0, 5)
+          .map((e) => {
+            const ruleId = e.ruleId && ruleIds.has(e.ruleId) ? e.ruleId : null;
+            const missing =
+              e.category === "insufficient_evidence" || e.kind === "unknown";
+            return this.sessions.store.put(
+              "event",
+              {
+                ...e,
+                ruleId,
+                assessment: missing ? "not_assessable" : e.assessment,
+                status: missing
+                  ? "insufficient_evidence"
+                  : "needs_confirmation",
+                timestampSeconds: body.timestampSeconds,
+                id: randomUUID(),
+                sessionId: s.id,
+                frameId: body.frameId,
+                simulated: this.provider.mode === "mock",
+                provider: this.provider.mode,
+                model: this.provider.model ?? null,
+                analyzedAt: completedAt,
+                latencyMs,
+                completedAfterStop: late,
+                history: [],
+                notes: "",
+              },
+              owner,
+            );
+          });
         const processing = this.sessions.store.put<ProcessingFrame>(
           "frame",
           {

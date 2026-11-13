@@ -5,6 +5,7 @@ import {
   type Rule,
   type Session,
   type ProcessingFrame,
+  type TradingPlan,
 } from "../shared/schema.js";
 export const fail = (status: number, message: string, code?: string) =>
   Object.assign(new Error(message), { status, code });
@@ -66,6 +67,7 @@ export class Sessions {
     mode: string,
     owner: string,
     includeLegacyRules = false,
+    tradingPlan?: TradingPlan,
   ) {
     const prefs = this.settings(owner);
     return this.store.transaction(() => {
@@ -83,6 +85,7 @@ export class Sessions {
           failedFrames: 0,
           capturedFrames: 0,
           notes: "",
+          tradingPlan,
           mode,
           intervalSeconds: prefs.intervalSeconds,
           captureIntervalSeconds: prefs.captureIntervalSeconds,
@@ -148,6 +151,7 @@ export class Sessions {
         sessionId: s.id,
         title: s.title,
         mode: s.mode,
+        tradingPlan: s.tradingPlan,
         generatedAt: new Date().toISOString(),
         startedAt: s.startedAt,
         endedAt: s.endedAt,
@@ -188,7 +192,13 @@ export class Sessions {
         improvements: usable.length
           ? [
               "Review the evidence and your corrections before drawing conclusions.",
-              "Review checklist items associated with potential deviations; supply missing execution context in notes.",
+              ...(s.tradingPlan
+                ? [
+                    "Compare each risk suggestion with your saved plan and verify the figures against your records.",
+                  ]
+                : [
+                    "Supply any missing trading context in your session notes.",
+                  ]),
             ]
           : [
               "No usable observations were available. No trading conclusions can be drawn.",

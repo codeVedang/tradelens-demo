@@ -63,6 +63,7 @@
     "docs/DEPLOYMENT.md",
     "docs/IMPLEMENTATION_REPORT.md",
     "PROJECT_STATUS.md",
-    "server/csv.ts"
+    "server/csv.ts",
+    "server/risk-coach.ts"
   ]
 }

@@ -81,6 +81,7 @@ function service() {
           attempts: 0,
           failedFrames: 0,
           notes: "",
+          tradingPlan: body.tradingPlan,
           mode: "mock",
           intervalSeconds: 5,
         };
@@ -176,9 +177,29 @@ it("runs a mocked browser capture through live observations, pause/resume, repor
   render(<App />);
   await screen.findAllByText("MOCK MODE");
   fireEvent.click(screen.getByRole("button", { name: "Live coach" }));
+  fireEvent.change(screen.getByLabelText("Strategy and session notes"), {
+    target: { value: "Wait for candle close" },
+  });
+  fireEvent.change(
+    screen.getByLabelText("Daily loss limit (% of account equity)"),
+    {
+      target: { value: "2" },
+    },
+  );
+  fireEvent.change(
+    screen.getByLabelText("Risk limit per trade (% of account equity)"),
+    {
+      target: { value: "0.5" },
+    },
+  );
   fireEvent.click(screen.getAllByRole("checkbox")[0]);
   fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
   await screen.findByText("SIMULATED: Review checklist");
+  expect(svc.getSessions()[0].tradingPlan).toEqual({
+    strategy: "Wait for candle close",
+    dailyLossLimitPercent: 2,
+    perTradeRiskLimitPercent: 0.5,
+  });
   fireEvent.click(screen.getByRole("button", { name: "Pause" }));
   expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Resume" }));

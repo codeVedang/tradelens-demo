@@ -165,6 +165,25 @@
 .pnl-profit {
   color: #50d49b;
 }
+.recording-plan {
+  border: 1px solid #343b47;
+  border-radius: 8px;
+  margin: 0 0 16px;
+  padding: 12px;
+  min-width: 0;
+}
+.recording-plan legend,
+.recording-plan summary {
+  font-weight: 600;
+  color: #e8edf2;
+}
+.recording-plan summary {
+  cursor: pointer;
+}
+.recording-plan .plan-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .pnl-loss {
   color: #ff7583;
 }

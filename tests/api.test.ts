@@ -87,6 +87,59 @@ describe("session APIs", () => {
     await request(app).post(`/api/sessions/${s.id}/start`).send({}).expect(409);
     await request(app).delete(`/api/sessions/${s.id}`).expect(409);
   });
+  it("uses the saved risk plan and reports missing readings without claiming a breach", async () => {
+    const tradingPlan = {
+      strategy: "Wait for candle close",
+      dailyLossLimitPercent: 2,
+      perTradeRiskLimitPercent: 0.5,
+    };
+    await request(app)
+      .post("/api/sessions")
+      .send({
+        tradingPlan: { ...tradingPlan, dailyLossLimitPercent: 0 },
+      })
+      .expect(400);
+    const { body: session } = await request(app)
+      .post("/api/sessions")
+      .send({ tradingPlan })
+      .expect(201);
+    await request(app)
+      .post(`/api/sessions/${session.id}/start`)
+      .send({})
+      .expect(200);
+    const analyze = (scenario: string) =>
+      request(app)
+        .post(`/api/sessions/${session.id}/frames`)
+        .send({ ...frame(), scenario })
+        .expect(200);
+    const within = await analyze("normal");
+    expect(within.body.observations[0].observation).toContain(
+      "1% is below your 2% limit",
+    );
+    const over = await analyze("deviation");
+    expect(over.body.observations[0]).toMatchObject({
+      category: "risk_management",
+      assessment: "potential_deviation",
+      simulated: true,
+    });
+    expect(over.body.observations[0].observation).toContain(
+      "2.5% is above your 2% limit",
+    );
+    expect(over.body.observations[1].observation).toContain(
+      "1% is above your 0.5% limit",
+    );
+    const missing = await analyze("insufficient");
+    expect(missing.body.observations[0]).toMatchObject({
+      status: "insufficient_evidence",
+      assessment: "not_assessable",
+    });
+    const report = await request(app)
+      .post(`/api/sessions/${session.id}/stop`)
+      .send({})
+      .expect(200);
+    expect(report.body.tradingPlan).toEqual(tradingPlan);
+    expect(report.body.unconfirmed).toHaveLength(6);
+  });
   it("validates frames and payload sizes", async () => {
     const id = await start();
     await request(app)
@@ -265,9 +318,14 @@ describe("providers", () => {
     ).toHaveLength(0);
   });
   it("uses the installed OpenAI Responses SDK with structured vision input and no response storage", async () => {
+    const tradingPlan = {
+      strategy: "Wait for candle close",
+      dailyLossLimitPercent: 2,
+    };
     const expected = await new MockAIProvider().analyze({
       ...frame(),
       rules: [],
+      tradingPlan,
       signal: new AbortController().signal,
       scenario: "normal",
     });
@@ -302,6 +360,7 @@ describe("providers", () => {
     const output = await p.analyze({
       ...frame(),
       rules: [],
+      tradingPlan,
       signal: new AbortController().signal,
       scenario: "normal",
     });
@@ -310,6 +369,10 @@ describe("providers", () => {
     const sent = JSON.parse(args[1]?.body as string);
     expect(sent.store).toBe(false);
     expect(sent.text.format.type).toBe("json_schema");
+    expect(sent.text.format.schema.properties).toHaveProperty("riskReview");
+    expect(sent.input[1].content[0].text).toContain(
+      JSON.stringify(tradingPlan),
+    );
     expect(sent.input[1].content[1].type).toBe("input_image");
   });
   it("uses real AI only when explicitly configured with a key", () => {

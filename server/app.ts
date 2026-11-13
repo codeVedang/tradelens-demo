@@ -11,7 +11,12 @@ import { type AIProvider } from "./providers.js";
 import { csv } from "./csv.js";
 import { Frames } from "./frames.js";
 import { Sessions, fail } from "./sessions.js";
-import { ruleSchema, settingsSchema, type Session } from "../shared/schema.js";
+import {
+  ruleSchema,
+  settingsSchema,
+  tradingPlanSchema,
+  type Session,
+} from "../shared/schema.js";
 const stopSchema = z.object({
   reason: z
     .enum(["user", "capture_ended", "page_closed", "unmount"])
@@ -262,11 +267,20 @@ export function createApp(
     const body = z
       .object({
         title: z.string().trim().min(1).max(100).default("Trading session"),
+        tradingPlan: tradingPlanSchema.optional(),
       })
       .parse(req.body);
     res
       .status(201)
-      .json(sessions.create(body.title, provider.mode, owner(req), !account));
+      .json(
+        sessions.create(
+          body.title,
+          provider.mode,
+          owner(req),
+          !account,
+          body.tradingPlan,
+        ),
+      );
   });
   app.get("/api/sessions", (req, res) => {
     const q = z

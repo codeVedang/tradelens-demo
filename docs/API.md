@@ -2,6 +2,8 @@
 
 Use same-origin requests. Authenticated requests carry the HttpOnly session cookie. Resource IDs and owner-scoped lookups prevent cross-account access. The public application pages are `/`, `/login`, and `/signup`. Protected pages are under `/app`.
 
+`POST /api/sessions` accepts an optional `tradingPlan` with `strategy` text and the percentages `dailyLossLimitPercent` and `perTradeRiskLimitPercent`. Reports and JSON exports include the saved plan when present.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | /api/health | Public health check |

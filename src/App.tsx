@@ -37,7 +37,11 @@ import {
 } from "recharts";
 import { api, ApiError, exportReport, notifyPageClosed } from "./api";
 import { Capture } from "./capture";
-import type { Session } from "../shared/schema";
+import {
+  tradingPlanSchema,
+  type Session,
+  type TradingPlan,
+} from "../shared/schema";
 const pages = [
   "Overview",
   "Live coach",
@@ -48,6 +52,24 @@ const pages = [
 const icons = [LayoutDashboard, Focus, FileText, BookOpen, Settings];
 export const duration = (seconds: number) =>
   `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+function SavedTradingPlan({ plan }: { plan?: TradingPlan }) {
+  if (!plan) return null;
+  return (
+    <details className="recording-plan saved-plan">
+      <summary>Trading plan for this session</summary>
+      {plan.dailyLossLimitPercent !== undefined && (
+        <p>Daily loss limit: {plan.dailyLossLimitPercent}% of account equity</p>
+      )}
+      {plan.perTradeRiskLimitPercent !== undefined && (
+        <p>
+          Risk limit per trade: {plan.perTradeRiskLimitPercent}% of account
+          equity
+        </p>
+      )}
+      {plan.strategy && <p className="plan-notes">{plan.strategy}</p>}
+    </details>
+  );
+}
 export default function App({
   account,
   subscription,
@@ -59,6 +81,9 @@ export default function App({
 } = {}) {
   const premium = !account || subscription?.active === true;
   const [addJournal, setAddJournal] = useState(false);
+  const [strategy, setStrategy] = useState("");
+  const [dailyRisk, setDailyRisk] = useState("");
+  const [tradeRisk, setTradeRisk] = useState("");
   const starting = useRef(false);
   const [captureError, setCaptureError] = useState("");
   const [page, setPage] = useState(
@@ -340,6 +365,18 @@ export default function App({
       activeRef.current
     )
       return;
+    const plan = tradingPlanSchema.safeParse({
+      strategy,
+      dailyLossLimitPercent: dailyRisk === "" ? undefined : Number(dailyRisk),
+      perTradeRiskLimitPercent:
+        tradeRisk === "" ? undefined : Number(tradeRisk),
+    });
+    if (!plan.success) {
+      setError(
+        "Enter risk limits between 0.01% and 100%, or leave them blank.",
+      );
+      return;
+    }
     starting.current = true;
     setCaptureError("");
     void run(async () => {
@@ -370,6 +407,9 @@ export default function App({
         setReviewFilter("all");
         s = await api("/sessions", "POST", {
           title: `Session · ${new Date().toLocaleDateString()}`,
+          ...(strategy.trim() || dailyRisk || tradeRisk
+            ? { tradingPlan: plan.data }
+            : {}),
         });
         if (engine.signal.aborted)
           throw new Error("Screen sharing ended before the session started.");
@@ -953,6 +993,59 @@ export default function App({
                   )}
                   {!active ? (
                     <>
+                      <fieldset
+                        className="recording-plan"
+                        disabled={busy || finalizing}
+                      >
+                        <legend>Trading plan</legend>
+                        <p>
+                          Set your own limits before sharing. The AI Companion
+                          checks daily loss first, then risk per trade.
+                        </p>
+                        <label>
+                          Strategy and session notes
+                          <textarea
+                            value={strategy}
+                            maxLength={2000}
+                            placeholder="Example: Wait for a candle to close. Check my daily loss before evaluating another trade."
+                            onChange={(event) =>
+                              setStrategy(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Daily loss limit (% of account equity)
+                          <input
+                            type="number"
+                            min="0.01"
+                            max="100"
+                            step="any"
+                            value={dailyRisk}
+                            placeholder="Example: 2"
+                            onChange={(event) =>
+                              setDailyRisk(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          Risk limit per trade (% of account equity)
+                          <input
+                            type="number"
+                            min="0.01"
+                            max="100"
+                            step="any"
+                            value={tradeRisk}
+                            placeholder="Example: 0.5"
+                            onChange={(event) =>
+                              setTradeRisk(event.target.value)
+                            }
+                          />
+                        </label>
+                        <p className="muted">
+                          All fields are optional. For live analysis, your plan
+                          is sent with the selected screen frames.
+                        </p>
+                      </fieldset>
                       <label className="check">
                         <input
                           type="checkbox"
@@ -1006,6 +1099,7 @@ export default function App({
                     </>
                   ) : (
                     <>
+                      <SavedTradingPlan plan={active.tradingPlan} />
                       <div className="live-status">
                         <span className="dot green" />
                         {paused
@@ -1292,6 +1386,7 @@ export default function App({
                   </div>
                   {report ? (
                     <>
+                      <SavedTradingPlan plan={selected.tradingPlan} />
                       <div className="report-stats">
                         <span>
                           Frames captured

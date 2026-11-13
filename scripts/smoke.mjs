@@ -99,7 +99,13 @@ try {
   const session = await call(
     "/sessions",
     "POST",
-    { title: "Isolated smoke session" },
+    {
+      title: "Isolated smoke session",
+      tradingPlan: {
+        strategy: "Wait for candle close",
+        dailyLossLimitPercent: 2,
+      },
+    },
     201,
   );
   await call(`/sessions/${session.id}/start`, "POST", {});
@@ -113,6 +119,10 @@ try {
   };
   const first = await call(`/sessions/${session.id}/frames`, "POST", body);
   assert.equal(first.observations[0].simulated, true);
+  assert.match(
+    first.observations[0].observation,
+    /2.5% is above your 2% limit/,
+  );
   const again = await call(`/sessions/${session.id}/frames`, "POST", body);
   assert.equal(again.deduplicated, true);
   await call(`/events/${first.observations[0].id}/feedback`, "POST", {
@@ -131,6 +141,7 @@ try {
   await launch();
   const reopened = await call(`/sessions/${session.id}/report`);
   assert.equal(reopened.confirmed.length, 1);
+  assert.deepEqual(reopened.tradingPlan, session.tradingPlan);
   assert.ok((await call("/journal")).some((row) => row.id === journal.id));
   await call("/journal/" + journal.id, "DELETE", undefined, 204);
   await call(`/sessions/${session.id}`, "DELETE", undefined, 204);

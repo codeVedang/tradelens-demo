@@ -27,6 +27,33 @@ export const observationSchema = z.object({
 export const analysisSchema = z.object({
   observations: z.array(observationSchema).max(5),
 });
+export const tradingPlanSchema = z
+  .object({
+    strategy: z.string().trim().max(2000).default(""),
+    dailyLossLimitPercent: z.number().min(0.01).max(100).optional(),
+    perTradeRiskLimitPercent: z.number().min(0.01).max(100).optional(),
+  })
+  .strict();
+export type TradingPlan = z.infer<typeof tradingPlanSchema>;
+
+const riskEvidence = z.string().trim().min(1).max(500);
+const riskReadingSchema = z
+  .union([
+    z.object({ percent: z.number().nonnegative(), evidence: riskEvidence }),
+    z.object({
+      lossAmount: z.number().nonnegative(),
+      accountEquity: z.number().positive(),
+      evidence: riskEvidence,
+    }),
+  ])
+  .nullable();
+export const riskReviewSchema = z.object({
+  dailyLoss: riskReadingSchema,
+  perTradeRisk: riskReadingSchema,
+});
+export const analysisWithRiskSchema = analysisSchema.extend({
+  riskReview: riskReviewSchema,
+});
 export const ruleSchema = z
   .object({
     title: z.string().trim().min(1).max(100),
@@ -97,6 +124,7 @@ export type Session = {
   attempts: number;
   failedFrames: number;
   notes: string;
+  tradingPlan?: TradingPlan;
   mode: string;
   intervalSeconds: number;
   captureIntervalSeconds?: number;
